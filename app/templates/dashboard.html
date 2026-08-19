@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#082a4a">
+  <title>GNEM Slurry Production Tracker</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="brand" data-view="home" aria-label="Go to home">
+      <span class="brand-mark">G</span>
+      <span>
+        <strong>GNEM Slurry Production Tracker</strong>
+        <small>Central factory records · Local SQL</small>
+      </span>
+    </button>
+    <nav aria-label="Main navigation / 主导航">
+      <button class="nav-link" data-view="production-records">Production records / 生产记录</button>
+      <button class="nav-link" data-view="ongoing">Ongoing abnormalities / 进行中异常</button>
+      <button class="nav-link" data-view="tracker">Abnormality tracker / 异常追踪</button>
+      <button class="nav-link manager-link" data-view="manager">Manager workspace / 管理工作区</button>
+    </nav>
+  </header>
+
+  <main>
+    <p id="notice" class="notice" aria-live="polite">
+      Operator mode: submit records and view recent data. Analysis stays manager-only. / 操作员模式：提交记录并查看近期数据。分析仅管理层可见。
+    </p>
+
+    <section id="home" class="view active">
+      <div class="hero">
+        <div>
+          <span class="eyebrow">FACTORY RECORDING SYSTEM / 工厂记录系统</span>
+          <h1>Clear records for every shift. / 保存提交当日记录</h1>
+          <p>Record today’s production and event information clearly and complete follow-ups when results are available. / 清晰记录并提交当日生产和事件信息，结果出来后可补充更新。</p>
+          <div class="hero-actions">
+            <button class="primary" data-view="production">Log production / 记录生产</button>
+            <button class="secondary light" data-view="abnormality">Report abnormality / 报告异常</button>
+            <button class="secondary light" data-view="daily-report">Generate report / 生成报告</button>
+          </div>
+        </div>
+        <div class="hero-panel task-home-panel">
+          <div class="task-panel-head"><span>Today's task / 今日任务</span><button id="edit-home-task" class="secondary light">Edit / 编辑</button></div>
+          <div id="home-task-details" class="home-task-details"></div>
+          <small>Employees may update today's task. / 员工可更新今日任务。</small>
+        </div>
+      </div>
+      <section class="home-ongoing-card">
+        <div class="home-ongoing-head"><div><span>FOLLOW-UP / 跟进提醒</span><h2>Ongoing events / 进行中事件</h2><p>Review unresolved events and complete their expected finish dates and solutions. / 查看未解决事件，并补充预计完成日期和解决方案。</p></div><button class="primary" data-view="ongoing">Open follow-up tracker / 打开跟进追踪</button></div>
+        <div id="home-ongoing-list" class="home-ongoing-list"></div>
+      </section>
+      <dialog id="home-task-dialog" class="task-dialog">
+        <form id="home-daily-task-form" method="dialog" class="form-card form-grid">
+          <div class="dialog-title"><h2>Edit today's task / 编辑今日任务</h2><button type="button" id="close-home-task" class="secondary">Close / 关闭</button></div>
+          <p class="wide">Add one item per task. Each production item has its own formula, tanks, and assigned machine. / 每项任务单独添加；每个生产任务可设置独立配方、罐数和设备。</p>
+          <div id="home-task-items" class="wide task-items"></div>
+          <div class="wide task-editor-actions"><button type="button" id="add-home-task-item" class="secondary">Add task / 添加任务</button></div>
+          <label class="wide">Reminders / 提醒事项 (one bullet per line / 每行一条)<textarea id="home-reminders" rows="5" maxlength="3600" placeholder="Example: Confirm qualified quantity for J2 batch 2301&#10;例如：确认 J2 批次 2301 的合格数量"></textarea></label>
+          <div class="wide form-actions"><button class="primary">Save today's tasks / 保存今日任务</button><span id="home-daily-task-status" aria-live="polite"></span></div>
+        </form>
+      </dialog>
+    </section>
+
+    <section id="daily-report" class="view">
+      <button class="back" data-view="home">← Back to overview / 返回概览</button>
+      <div class="view-head">
+        <div class="section-title">
+          <span>DAILY REPORT / 每日报告</span>
+          <h1>Production and Event Report / 生产与事件报告</h1>
+          <p>Select one date. This compact page is designed for a full-page screenshot. / 选择一个日期；本页面为整页截图而设计。</p>
+        </div>
+        <div class="report-controls">
+          <input id="report-date" type="date" aria-label="Report date / 报告日期">
+          <button id="generate-report" class="primary">Generate report / 生成报告</button>
+        </div>
+      </div>
+      <div id="report-sheet" class="report-sheet" hidden>
+        <div class="report-title"><div><strong>GNEM Slurry Production Tracker / GNEM 浆料生产追踪器</strong><span id="report-date-label"></span></div><span>Operational snapshot / 运营快照</span></div>
+        <div class="report-grid">
+          <section class="report-section production-report"><h2>Production data / 生产数据</h2><div id="report-production"></div></section>
+          <section class="report-section event-report"><div class="event-report-banner"><span>每日事件明细</span><strong>Daily Event Details</strong></div><div id="report-events"></div></section>
+        </div>
+      </div>
+    </section>
+
+    <section id="production" class="view">
+      <button class="back" data-view="home">← Back to overview</button>
+      <div class="section-title">
+        <span>01 / RECORD · 记录</span>
+        <h1>Production data / 生产数据</h1>
+        <p>All required fields support normal keyboard entry and copy/paste. / 所有必填字段均支持键盘输入和复制粘贴。</p>
+      </div>
+      <div class="form-date-reference"><span>Record date / 记录日期</span><strong data-today-date>—</strong><small>Automatically saved by the server / 由服务器自动保存</small></div>
+      <form id="production-form" class="form-card form-grid">
+        <label>Shift / 班次<select name="shift_name"><option value="Day">Day / 白班</option><option value="Night">Night / 夜班</option></select></label>
+        <label>Machine / 设备<select name="machine_code" required><option value="" selected disabled>Select machine / 选择设备</option><option>J1</option><option>J2</option><option>J3</option><option>J4</option><option>J5</option><option>J6</option><option>J7</option><option>J8</option><option>J9</option><option>J10-1</option><option>J10-2</option><option>J10-3</option><option>J10-4</option><option>J10-5</option></select></label>
+        <label>Formula / 配方<select name="formula_code" id="formula-code" required><option value="K1-26">K1-26</option><option value="B1-1">B1-1</option><option value="E3">E3</option><option value="custom">Custom / 自定义</option></select></label>
+        <label id="custom-formula-field" hidden>Custom formula / 自定义配方<input name="custom_formula" maxlength="50" placeholder="Enter formula / 输入配方"></label>
+        <label>Batch number / 批次号<input name="batch_number" required></label>
+        <label>Planned quantity / 计划数量<input name="planned_quantity" type="number" min="0" step=".01" required></label>
+        <label>Actual quantity / 实际数量<input name="actual_quantity" type="number" min="0" step=".01" required></label>
+        <label>Qualified quantity / 合格数量<input name="qualified_quantity" type="number" min="0" step=".01"><small>Leave blank when pending; update it later in Production records. / 未出结果可留空，之后在生产记录中补充。</small></label>
+        <label class="wide">Notes / 备注<textarea name="notes" placeholder="Paste or enter production notes / 粘贴或输入生产备注"></textarea></label>
+        <div id="production-custom" class="wide dynamic-fields"></div>
+        <div class="wide form-actions">
+          <button class="primary">Save production record / 保存生产记录</button>
+          <button type="button" class="secondary" data-view="production-records">View saved records / 查看已保存记录</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="production-records" class="view">
+      <button class="back" data-view="home">← Back to overview</button>
+      <div class="view-head">
+        <div class="section-title">
+          <span>01 / HISTORY · 历史记录</span>
+          <h1>Production records / 生产记录</h1>
+          <p>Most recent central SQL records. Use Copy table for Excel or an approved email. / 最新中央 SQL 记录，可复制到 Excel 或批准的电子邮件。</p>
+        </div>
+        <div>
+          <button class="secondary copy" data-copy="production-table">Copy table / 复制表格</button>
+          <button class="primary refresh" data-type="production" data-target="#production-table">Refresh / 刷新</button>
+        </div>
+      </div>
+      <div class="history-filters" data-history-filters="production">
+        <label>Date / 日期<input class="history-filter" name="date" type="date"></label>
+        <label>Machine / 设备<input class="history-filter" name="machine" placeholder="A1"></label>
+        <button class="secondary refresh" data-type="production" data-target="#production-table">Apply filters / 应用筛选</button>
+      </div>
+      <div id="production-table"></div>
+      <div id="production-followup-panel" class="followup-panel" hidden></div>
+    </section>
+
+    <section id="abnormality" class="view">
+      <button class="back" data-view="home">← Back to overview</button>
+      <div class="view-head">
+        <div class="section-title">
+          <span>02 / RECORD · 记录</span>
+          <h1>Event tracker / 事件追踪</h1>
+          <p>Report an event quickly; managers see analysis separately. / 快速报告异常；分析仅管理层可见。</p>
+        </div>
+        <button id="open-cost-guide" type="button" class="secondary">Cost guide / 成本说明</button>
+      </div>
+      <div class="form-date-reference"><span>Event date / 事件日期</span><strong data-today-date>—</strong><small>Automatically saved by the server / 由服务器自动保存</small></div>
+      <form id="abnormality-form" class="form-card form-grid">
+        <label>Event time / 事件时间
+          <span class="time-range-input" aria-label="Event time in 24-hour format">
+            <input class="time-part" name="start_hour" inputmode="numeric" pattern="[0-9]{2}" maxlength="2" placeholder="00" aria-label="Start hour" required><b>:</b>
+            <input class="time-part" name="start_minute" inputmode="numeric" pattern="[0-9]{2}" maxlength="2" placeholder="00" aria-label="Start minute" required><b class="time-divider">-</b>
+            <input class="time-part" name="end_hour" inputmode="numeric" pattern="[0-9]{2}" maxlength="2" placeholder="00" aria-label="End hour" required><b>:</b>
+            <input class="time-part" name="end_minute" inputmode="numeric" pattern="[0-9]{2}" maxlength="2" placeholder="00" aria-label="End minute" required>
+          </span>
+        </label>
+        <label>Shift / 班次<select name="shift_name"><option value="Day">Day / 白班</option><option value="Night">Night / 夜班</option></select></label>
+        <label>Machine / 设备<select name="machine_code" required><option value="" selected disabled>Select machine / 选择设备</option><option>J1</option><option>J2</option><option>J3</option><option>J4</option><option>J5</option><option>J6</option><option>J7</option><option>J8</option><option>J9</option><option>J10-1</option><option>J10-2</option><option>J10-3</option><option>J10-4</option><option>J10-5</option><option value="NA">NA / 不适用</option></select></label>
+        <label>Process type / 工艺类型<select name="machine_type" required><option value="semi">Semi / 半自动</option><option value="auto">Auto / 全自动</option></select></label>
+        <label>
+          Event type / 异常类型
+          <select name="event_type" id="event-type" required></select>
+        </label>
+        <label>Severity | Priority / 严重程度 | 优先级<select name="severity"><option value="normal">Normal / 正常</option><option value="low">Low / 低</option><option value="medium">Medium / 中</option><option value="high">High / 高</option></select></label>
+        <label>Is it resolved? / 是否已解决<select name="is_resolved"><option value="no">No / 否</option><option value="yes">Yes / 是</option></select></label>
+        <label>Responsible person / 责任人<input name="responsible_person" placeholder="Name / 姓名"></label>
+        <label>Expected finish date / 预计完成日期<input name="target_finish_date" type="date"></label>
+        <label>是否为有效时间成本 / Effective time cost?<select name="effective_time_cost"><option value="no">No / 否</option><option value="yes">Yes / 是</option></select></label>
+        <label class="wide">What happened? / 发生了什么？<textarea name="description" required></textarea></label>
+        <label class="wide">Immediate action / 立即措施<textarea name="immediate_action"></textarea></label>
+        <div id="abnormality-custom" class="wide dynamic-fields"></div>
+        <div class="wide form-actions">
+          <button class="primary">Save abnormality report / 保存异常报告</button>
+          <button type="button" class="secondary" data-view="ongoing">Ongoing abnormalities / 进行中异常</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="tracker" class="view">
+      <button class="back" data-view="home">← Back to overview</button>
+      <div class="view-head">
+        <div class="section-title">
+          <span>02 / TRACKER · 追踪</span>
+          <h1>Event tracker / 事件追踪</h1>
+          <p>Review event status and follow up through ongoing events. / 通过进行中事件完成跟进。</p>
+        </div>
+        <div>
+          <button class="secondary copy" data-copy="tracker-table">Copy table</button>
+          <button class="primary refresh" data-type="tracker" data-target="#tracker-table">Refresh</button>
+        </div>
+      </div>
+      <div class="history-filters" data-history-filters="tracker">
+        <label>Date / 日期<input class="history-filter" name="date" type="date"></label>
+        <label>Machine / 设备<input class="history-filter" name="machine" placeholder="A1"></label>
+        <button class="secondary refresh" data-type="tracker" data-target="#tracker-table">Apply filters / 应用筛选</button>
+      </div>
+      <div id="tracker-table"></div>
+    </section>
+
+    <section id="ongoing" class="view">
+      <button class="back" data-view="home">← Back to overview / 返回概览</button>
+      <div class="view-head">
+        <div class="section-title">
+          <span>02 / ONGOING · 进行中</span>
+          <h1>Ongoing abnormalities / 进行中异常</h1>
+          <p>Records not yet marked resolved. / 尚未标记为已解决的异常记录。</p>
+        </div>
+        <div>
+          <button class="secondary copy" data-copy="ongoing-table">Copy table / 复制表格</button>
+          <button class="primary refresh" data-type="ongoing" data-target="#ongoing-table">Refresh / 刷新</button>
+        </div>
+      </div>
+      <div class="history-filters" data-history-filters="ongoing">
+        <label>Date / 日期<input class="history-filter" name="date" type="date"></label>
+        <label>Machine / 设备<input class="history-filter" name="machine" placeholder="A1"></label>
+        <button class="secondary refresh" data-type="ongoing" data-target="#ongoing-table">Apply filters / 应用筛选</button>
+      </div>
+      <div id="ongoing-table"></div>
+    </section>
+
+    <dialog id="cost-guide-dialog">
+      <div class="dialog-head"><h2>Failure-cost guide / 失效成本说明</h2><button id="close-cost-guide" class="secondary" type="button">Close / 关闭</button></div>
+      <table><thead><tr><th>Cost-failure type / 成本失效类型</th><th>What this field means / 字段说明</th></tr></thead>
+      <tbody id="cost-guide-body"></tbody></table>
+    </dialog>
+
+    <section id="manager" class="view">
+      <button class="back" data-view="home">← Back to overview</button>
+      <div class="section-title">
+        <span>MANAGER ONLY</span>
+        <h1>Manager workspace</h1>
+        <p>Dashboards, exception analysis, and form configuration are not visible in operator mode.</p>
+      </div>
+      <div id="manager-login" class="form-card compact">
+        <h2>Unlock manager view</h2>
+        <p>Use the manager PIN. This access expires automatically.</p>
+        <form id="manager-form" class="inline">
+          <input name="pin" type="password" autocomplete="current-password" placeholder="Manager PIN" required>
+          <button class="primary">Unlock workspace</button>
+        </form>
+      </div>
+      <div id="manager-content" hidden>
+        <div class="manager-toolbar">
+          <span>Manager session active</span>
+          <div class="manager-actions">
+            <button id="run-manual-backup" class="secondary">Create manual backup / 创建手动备份</button>
+            <button id="manager-logout" class="secondary">Sign out / 退出</button>
+          </div>
+        </div>
+        <p id="backup-status" class="manager-backup-status" aria-live="polite"></p>
+        <div class="manager-overview">
+          <span>MANAGEMENT OVERVIEW / 管理概览</span>
+          <h2>Monitor operations, review exceptions, and control form options.</h2>
+          <p>Operational records remain separate from manager-only analysis and configuration.</p>
+        </div>
+        <div class="dashboard-grid">
+          <article><span>Today’s production records</span><strong id="metric-records">—</strong></article>
+          <article><span>Today’s qualified yield</span><strong id="metric-yield">—</strong></article>
+          <article><span>Open abnormalities</span><strong id="metric-events">—</strong></article>
+          <article><span>Open-event downtime</span><strong id="metric-downtime">—</strong></article>
+        </div>
+        <div class="manager-grid">
+          <article class="form-card">
+            <h2>Analysis and exceptions</h2>
+            <p>Current rules check yield, output variance, severity, downtime, and incomplete reports. Future AI summaries remain manager-only and read-only.</p>
+            <button id="load-analysis" class="primary">Refresh exception analysis</button>
+            <div id="analysis-table"></div>
+          </article>
+          <article class="form-card">
+            <h2>Cost-failure types / 成本失效类型</h2>
+            <p>Add, change, or deactivate checkbox choices and their guide definitions. / 添加、修改或停用复选框选项及其说明。</p>
+            <form id="cost-type-form" class="form-grid">
+              <label>Type code / 类型代码<input name="type_code" placeholder="material_loss" required></label>
+              <label>Display name / 显示名称<input name="display_name" placeholder="Material loss / 材料损失" required></label>
+              <label class="wide">Definition / 定义<textarea name="definition" placeholder="Explain this cost category / 说明此成本类别" required></textarea></label>
+              <div class="wide form-actions"><button class="primary">Save cost type / 保存成本类型</button></div>
+            </form>
+            <div id="manager-cost-types"></div>
+          </article>
+          <article class="form-card manager-record-editor">
+            <h2>Correct operational record / 修正业务记录</h2>
+            <p>Managers can load a record by ID, correct it, and save an auditable revision. The original record date remains unchanged. / 管理员可按记录编号加载、修正并保存；原始记录日期保持不变。</p>
+            <form id="manager-record-load" class="inline"><label>Record type / 记录类型<select name="record_type"><option value="production">Production / 生产</option><option value="abnormality">Event / 事件</option></select></label><label>Saved record / 已保存记录<select name="record_id" id="manager-record-select" required><option value="">Select a record / 选择记录</option></select></label><button class="secondary">Load record / 加载记录</button></form>
+            <form id="manager-record-edit" class="form-grid" hidden><div id="manager-record-edit-fields" class="wide dynamic-fields"></div><div class="wide form-actions"><button class="primary">Save correction / 保存修正</button><span id="manager-record-edit-status"></span></div></form>
+          </article>
+          <article class="form-card manager-fields-panel">
+            <h2>Configure operator fields and options / 配置员工字段与选项</h2>
+            <p>Edit the labels and guidance for the built-in Production and Event Tracker fields, manage Event type choices, or add an optional extra field when genuinely needed. / 可编辑生产和事件追踪内置字段的名称与说明，维护事件类型选项，或在确有需要时添加额外字段。</p>
+            <div class="manager-config-grid">
+              <section class="manager-config-section">
+                <h3>Standard fields / 标准字段</h3>
+                <p>These are the actual fields already stored in the Production and Event Tracker SQL tables. / 这些是已存储在生产和事件追踪 SQL 表中的实际字段。</p>
+                <form id="standard-field-form" class="form-grid">
+                  <label>Form / 表单<select name="form_key"><option value="production">Production / 生产</option><option value="abnormality">Event tracker / 事件追踪</option></select></label>
+                  <label>Field / 字段<select name="field_key" id="standard-field-select" required></select></label>
+                  <label>Label / 字段名称<input name="label" required></label>
+                  <label class="wide" id="standard-field-options-wrap">Dropdown options (one per line; leave blank to keep the system defaults) / 下拉选项（每行一项；留空则保留系统默认值）<textarea name="options" placeholder="Option 1 / 选项 1&#10;Option 2 / 选项 2"></textarea></label>
+                  <label class="wide">Help text (optional) / 字段说明（可选）<textarea name="help_text" placeholder="Short instruction shown to employees / 员工可见的简短填写说明"></textarea></label>
+                  <div class="wide form-actions"><button class="primary">Save standard field / 保存标准字段</button></div>
+                </form>
+                <details class="manager-options-dropdown optional-custom-fields"><summary>Optional custom fields / 可选自定义字段</summary>
+                  <p>Only use this to add a genuinely new data item. Existing custom fields are listed here; they do not replace standard SQL columns. / 仅在确需新增数据项时使用。现有自定义字段在此列出；它们不会替换标准 SQL 字段。</p>
+                  <form id="field-form" class="form-grid">
+                    <label>Form / 表单<select name="form_key"><option value="production">Production / 生产</option><option value="abnormality">Event tracker / 事件追踪</option></select></label>
+                    <label>Existing custom field / 现有自定义字段<select id="existing-field"><option value="">New field / 新字段</option></select></label>
+                    <label>Field key / 字段代码<input name="field_key" placeholder="quality_check" required></label>
+                    <label>Label / 字段名称<input name="label" placeholder="Quality check / 质量检查" required></label>
+                    <label>Input type / 输入类型<select name="input_type"><option>text</option><option>number</option><option>date</option><option>select</option><option>textarea</option></select></label>
+                    <label class="wide">Select options (one per line) / 下拉选项（每行一项）<textarea name="options" placeholder="Pass / 通过&#10;Fail / 不通过"></textarea></label>
+                    <div class="wide form-actions"><button class="primary">Save custom field / 保存自定义字段</button></div>
+                  </form>
+                  <div id="manager-field-list" class="manager-field-list"></div>
+                </details>
+              </section>
+              <section id="event-type-options-panel" class="manager-config-section" hidden>
+                <h3>Event type choices / 事件类型选项</h3>
+                <p>Select an existing option to rename it, or select New event type to add one. / 选择现有选项以重命名，或选择新事件类型进行添加。</p>
+                <form id="event-type-form" class="form-grid">
+                  <label class="wide">Existing event type / 现有事件类型<select id="existing-event-type"><option value="">New event type / 新事件类型</option></select></label>
+                  <label>Saved value / 保存值<input name="event_value" placeholder="Cleaning event" required></label>
+                  <label>Display name / 显示名称<input name="display_name" placeholder="Cleaning / 清洁" required></label>
+                  <div class="wide form-actions"><button class="primary">Save event type / 保存事件类型</button></div>
+                </form>
+                <div id="manager-event-types"></div>
+              </section>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

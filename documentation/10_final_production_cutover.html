@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Final production cutover | GNEM</title>
+<link rel="stylesheet" href="assets/docs.css">
+</head>
+<body>
+<header class="top">
+<a href="index.html">
+<strong>GNEM Slurry Production Tracker</strong>
+<span>System documentation</span>
+</a>
+</header>
+<main>
+<article class="doc">
+<h1>Final production cutover / 最终生产部署</h1>
+<p>Use this checklist when moving the tested project to the final always-on factory server. It preserves the working structure, keeps passwords out of GitHub, and avoids deleting records.</p>
+<h2>1. Keep both MySQL schemas</h2>
+<table>
+<thead>
+<tr>
+<th>Schema</th>
+<th>Purpose</th>
+<th>Who uses it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>slurry_management</code>
+</td>
+<td>Protected application tables: audit history, manager functions, exception queue, migration history.</td>
+<td>GNEM web app only</td>
+</tr>
+<tr>
+<td>
+<code>system_import</code>
+</td>
+<td>Clean operational/reporting tables: production records, event tracker, field definitions, sync receipts.</td>
+<td>GNEM web app and read-only Power BI</td>
+</tr>
+</tbody>
+</table>
+<p>Both are necessary in the current code. This is a useful industry-standard separation: the operational app area is protected, while reporting connects only to the controlled import schema. Do not delete either schema.</p>
+<h2>2. Keep the migration history</h2>
+<p>The clean distribution begins with one consolidated file: <code>migrations/001_initial_schema.sql</code>. It creates the complete current two-schema baseline and seeds active UI choices. Historical development migrations are excluded. After deployment, never edit an applied migration; add a new numbered migration instead. Existing production databases must retain their original migration history.</p>
+<h2>3. Create the three MySQL accounts</h2>
+<p>Open MySQL Workbench on the final server as the MySQL administrator. Copy <code>deployment\sql\create_production_accounts.sql.template</code> to a private temporary file, replace every password placeholder with a long random password, replace <code>POWERBI_GATEWAY_IP</code> with the approved Power BI computer/gateway IP, then run it. Never save the completed version in GitHub or a shared folder.</p>
+<table>
+<thead>
+<tr>
+<th>Account</th>
+<th>Used for</th>
+<th>Permissions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>slurry_web_app@localhost</code>
+</td>
+<td>GNEM employee and manager web application</td>
+<td>Read, add, and update only; it cannot change database structure.</td>
+</tr>
+<tr>
+<td>
+<code>slurry_powerbi@POWERBI_GATEWAY_IP</code>
+</td>
+<td>Power BI import/refresh</td>
+<td>Read-only access to <code>system_import</code> only.</td>
+</tr>
+<tr>
+<td>
+<code>slurry_migrator@localhost</code>
+</td>
+<td>One-time installation and future approved upgrades</td>
+<td>Can create/alter required tables; remove it after migration unless IT retains it in a password vault.</td>
+</tr>
+<tr>
+<td>
+<code>slurry_ai@AI_SERVICE_IP</code>
+</td>
+<td>Future manager-only AI service</td>
+<td>Read-only access to <code>system_import</code>; create only once approved AI code exists.</td>
+</tr>
+</tbody>
+</table>
+<p>There is no operator MySQL account: operators do not receive database credentials. Manager access is the manager PIN in <code>.env</code>, not a MySQL account.</p>
+<h2>4. Build the final server folder</h2>
+<ol>
+<li>On the final server, create <code>C:\SlurryManagement</code> under an approved dedicated Windows service account. Do not run the live server from Desktop, OneDrive, a USB drive, or a shared drive.</li>
+<li>Recommended: download the reviewed, versioned GitHub Release ZIP and extract its runtime files into that folder. Git is not required on the server; GitHub transfers approved code only.</li>
+<li>Do not copy <code>.env</code>, <code>.venv</code>, <code>logs</code>, <code>backups</code>, Caddy private data, or test database files from the test server.</li>
+<li>Create a new <code>.env</code> by copying <code>.env.example</code>. Set <code>DB_USER=slurry_web_app</code> and its new password. Set new random <code>SECRET_KEY</code> and <code>MANAGER_PIN</code>.</li>
+<li>Run <code>python -m venv .venv</code>, then <code>.venv\Scripts\pip install -r requirements.txt</code>.</li>
+<li>Temporarily set <code>DB_USER=slurry_migrator</code> in <code>.env</code>, run <code>.venv\Scripts\python scripts\apply_migrations.py</code>, then immediately restore <code>slurry_web_app</code> credentials in <code>.env</code>.</li>
+</ol>
+<h2>4A. Approved update workflow</h2>
+<ol>
+<li>Make and test changes only on the development/test computer.</li>
+<li>Commit approved source to GitHub and publish a versioned GitHub Release ZIP.</li>
+<li>On the server, back up MySQL before updating.</li>
+<li>Extract the approved Release ZIP over runtime application files. Do not overwrite <code>.env</code>, <code>.venv</code>, <code>logs</code>, <code>backups</code>, Caddy private certificate data, or MySQL data.</li>
+<li>Run <code>.venv\Scripts\pip install -r requirements.txt</code> only if the release changed <code>requirements.txt</code>.</li>
+<li>Run migrations only when the release contains a new numbered migration. Use the temporary migration account, then return <code>.env</code> to the restricted web-app account.</li>
+<li>Run <code>Restart_GNEM_Slurry_Tracker.cmd</code>, test the HTTPS link from a second computer, and record the deployed release version.</li>
+</ol>
+<h2>5. Deploy HTTPS safely</h2>
+<ol>
+<li>Set the final server IP as reserved/static and configure the name <code>slurry-management.local</code> through internal DNS. Hosts-file entries are acceptable only for a small pilot.</li>
+<li>Use <code>WEB_HOST=127.0.0.1</code>, <code>WEB_PORT=5000</code>, and <code>BEHIND_TLS_PROXY=true</code>.</li>
+<li>Start GNEM using <code>Start_GNEM_Slurry_Tracker.cmd</code>. It starts the local app and Caddy.</li>
+<li>Export the final Caddy root certificate and deploy it through IT/Group Policy, or install it once on each approved factory computer. See <a href="09_https_certificate_setup.html">09 HTTPS certificate setup</a>.</li>
+<li>Allow inbound TCP 443 only from the factory subnet. Keep 5000 and 3306 inaccessible to employee computers. Do not expose this application to the public internet.</li>
+</ol>
+<h2>6. Final acceptance test</h2>
+<ul>
+<li>From a second factory computer, open <code>https://slurry-management.local</code> with no certificate warning.</li>
+<li>Submit one production record and one event; verify both are visible on the server and in <code>system_import</code>.</li>
+<li>Verify the public display works and shows no manager-only detail.</li>
+<li>Test manager PIN, then sign out.</li>
+<li>Connect Power BI using <code>slurry_powerbi</code>; confirm it can read <code>system_import</code> but cannot update data.</li>
+<li>Run a backup and test restoring it into a non-production database.</li>
+</ul>
+<h2>7. Clean production release contents</h2>
+<p>
+<strong>Keep on the server:</strong> <code>app</code>, <code>deployment</code>, <code>documentation</code>, <code>migrations</code>, <code>scripts</code>, <code>static_dashboard</code>, <code>main.py</code>, <code>requirements.txt</code>, launcher files, and a local private <code>.env</code>.</p>
+<p>
+<strong>Keep in GitHub but not required for runtime:</strong> <code>tests</code>, <code>.github</code>, <code>README.md</code>, <code>CHANGELOG.md</code>.</p>
+<p>
+<strong>Never commit or copy as a release:</strong> <code>.env</code>, <code>.venv</code>, <code>logs</code>, <code>backups</code>, <code>.pytest_cache</code>, Caddy private certificate data, database files, or completed password scripts.</p>
+</article>
+<p class="footer">Editable HTML final-cutover guide. Review it before moving to the permanent factory server.</p>
+</main>
+</body>
+</html>

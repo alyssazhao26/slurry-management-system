@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HTTPS certificate setup | GNEM</title>
+<link rel="stylesheet" href="assets/docs.css">
+</head>
+<body>
+<header class="top">
+<a href="index.html">
+<strong>GNEM Slurry Production Tracker</strong>
+<span>System documentation</span>
+</a>
+</header>
+<main>
+<article class="doc">
+<h1>HTTPS certificate setup / HTTPS 证书设置</h1>
+<p>This guide describes the current single-server factory setup. GNEM is internal-only and must not be exposed to the internet.</p>
+<h2>Correct employee link</h2>
+<p>Employees and managers use <strong>
+<code>https://slurry-management.local</code>
+</strong>. Do not use <code>http://...:5000</code>: port 5000 is private between Caddy and the local Python application.</p>
+<h2>How the certificate works</h2>
+<p>Caddy listens on HTTPS port 443 and creates an internal certificate for <code>slurry-management.local</code>. The factory root certificate file is <code>deployment\caddy\GNEM-Factory-Root-CA.crt</code>. It is a trust file, not a password; distribute it only to approved factory devices.</p>
+<h2>Set up each approved employee computer</h2>
+<ol>
+<li>Connect the computer to the factory network.</li>
+<li>Make sure <code>slurry-management.local</code> resolves to the factory server. Until IT creates internal DNS, add this line to the computer's hosts file as Administrator: <code>FACTORY_SERVER_IP slurry-management.local</code>. Replace the placeholder with the reserved server IP.</li>
+<li>Copy <code>GNEM-Factory-Root-CA.crt</code> from the server's <code>deployment\caddy</code> folder.</li>
+<li>Open the certificate file, choose <strong>Install Certificate</strong>, select <strong>Local Machine</strong>, then store it in <strong>Trusted Root Certification Authorities</strong>. Administrator permission is required. IT can deploy it centrally with Group Policy instead.</li>
+<li>Close every browser window, open a new browser, and visit <code>https://slurry-management.local</code>. The browser must show a secure lock with no warning.</li>
+</ol>
+<h2>Server settings that must remain in place</h2>
+<pre>
+<code>WEB_HOST=127.0.0.1&#10;WEB_PORT=5000&#10;ALLOWED_HOSTS=localhost,127.0.0.1,FACTORY_SERVER_IP,slurry-management.local&#10;BEHIND_TLS_PROXY=true</code>
+</pre>
+<p>Caddy configuration: <code>deployment\caddy\Caddyfile</code>.</p>
+<pre>
+<code>https://slurry-management.local {&#10;    tls internal&#10;    reverse_proxy 127.0.0.1:5000&#10;}</code>
+</pre>
+<h2>Firewall and network boundary</h2>
+<ul>
+<li>Allow TCP 443 only for Private/Domain factory networks.</li>
+<li>Keep TCP 5000 private to the server; do not create a firewall rule for it.</li>
+<li>Block TCP 3306 from employee devices.</li>
+<li>Never port-forward 443, 5000, or 3306 to the internet.</li>
+</ul>
+<h2>Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Site cannot be reached</td>
+<td>The factory server must be awake; run <code>Start_GNEM_Slurry_Tracker.cmd</code>. Confirm the hosts/DNS name points to the server and firewall allows 443.</td>
+</tr>
+<tr>
+<td>Not secure or certificate warning</td>
+<td>Do not continue. Install the factory root certificate into the Local Machine trusted-root store, restart the browser, and confirm the URL is exactly <code>https://slurry-management.local</code>.</td>
+</tr>
+<tr>
+<td>Port 5000 works but HTTPS does not</td>
+<td>Do not use port 5000 as a workaround. Check <code>logs\caddy.stderr.log</code> and confirm Caddy is listening on 443.</td>
+</tr>
+<tr>
+<td>Only one computer fails</td>
+<td>Its hosts/DNS entry or trusted root certificate is missing; fix only that computer.</td>
+</tr>
+</tbody>
+</table>
+<h2>Renewal and change control</h2>
+<p>Caddy's internal certificate renews automatically while the gateway is running. Do not delete Caddy's data folders, replace the Caddyfile, or generate a new root certificate without IT approval: existing employee devices would no longer trust the replacement. If the factory server IP changes, update internal DNS or every approved hosts file and test HTTPS again.</p>
+</article>
+<p class="footer">Editable HTML certificate guide. Review after changing the factory server, local DNS, Caddy, or certificate.</p>
+</main>
+</body>
+</html>

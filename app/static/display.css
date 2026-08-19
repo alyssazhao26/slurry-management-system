@@ -1,0 +1,41 @@
+:root { --navy:#06233f; --blue:#0b4d7a; --sky:#55bceb; --white:#fff; --yellow:#ffe496; --ink:#102b42; }
+* { box-sizing:border-box; } body { min-height:100vh; margin:0; background:linear-gradient(135deg,var(--navy),var(--blue)); color:var(--white); font:18px/1.4 "Segoe UI",Arial,sans-serif; }
+body.fit-screen { overflow:hidden; }
+body.auto-scroll { font-size:26px; }
+body.auto-scroll .display-shell { padding:32px 42px; }
+body.auto-scroll h1 { font-size:60px; }
+body.auto-scroll .display-head span { font-size:20px; }
+body.auto-scroll .display-date strong { font-size:44px; }
+body.auto-scroll .section-head h2 { font-size:40px; }
+body.auto-scroll .section-head span,
+body.auto-scroll footer { font-size:18px; }
+body.auto-scroll .task-group h3 { font-size:32px; }
+body.auto-scroll .display-task-list span,
+body.auto-scroll .display-reminder-list li { font-size:21px; }
+body.auto-scroll .rate-pair small { font-size:20px; }
+body.auto-scroll .rate-card strong { font-size:52px; }
+body.auto-scroll .ongoing-item span { font-size:19px; line-height:1.5; }
+body.auto-scroll .display-table th,
+body.auto-scroll .display-table td { padding:16px; font-size:20px; }
+body.auto-scroll .display-table th { white-space:normal; line-height:1.25; }
+.display-shell { min-height:100vh; padding:clamp(18px,2.4vw,34px); }.display-head,.section-head { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; }.display-head span { color:var(--sky); font-size:14px; font-weight:800; letter-spacing:1.5px; }h1 { margin:3px 0 0; font-size:clamp(28px,3vw,46px); }.display-date { text-align:right; }.display-date strong { display:block; font-size:clamp(22px,2vw,34px); }small { color:#c7dfec; }
+.display-layout { display:grid; grid-template-columns:2fr 1fr 1fr; grid-template-areas:"task rates reminders" "task ongoing ongoing"; gap:14px; margin:20px 0 14px; }.display-section { border:1px solid #ffffff36; border-radius:20px; background:#ffffff12; box-shadow:0 14px 32px #031a2d38; padding:18px; }.task-section { grid-area:task; }.production-rates-card { grid-area:rates; }.reminder-section { grid-area:reminders; }.ongoing-section { grid-area:ongoing; }.event-detail-section { margin-top:14px; }.section-head h2 { margin:0; font-size:clamp(21px,2.4vw,32px); }.section-head span { color:#c7dfec; font-size:13px; }.rate-card > span { color:#c7dfec; font-weight:700; }.rate-pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:10px 0; }.rate-pair small { display:block; font-size:12px; }.rate-card strong { display:block; margin:6px 0; font-size:clamp(27px,3vw,48px); line-height:1; }.display-reminder-list { display:grid; gap:8px; margin-top:12px; }.display-reminder-list ul { margin:0; padding:0; list-style:none; }.display-reminder-list li { position:relative; padding:8px 8px 8px 24px; border-radius:8px; background:#ffffff12; font-size:14px; }.display-reminder-list li::before { content:"•"; position:absolute; left:9px; color:var(--sky); }
+.task-group + .task-group { margin-top:18px; }.task-group h3 { margin:16px 0 8px; color:var(--sky); font-size:22px; }.display-task-list ul { display:grid; gap:12px; margin:0; padding:0; list-style:none; }.display-task-list li { position:relative; padding:14px 14px 14px 34px; border-radius:11px; background:#ffffff12; }.display-task-list li::before { content:"•"; position:absolute; left:14px; top:10px; color:var(--sky); font-size:25px; }.display-task-list strong,.display-task-list span { display:block; }.display-task-list span { margin-top:4px; color:#d4e7f2; font-size:14px; }
+.ongoing-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }.ongoing-item { padding:10px; border-radius:10px; background:var(--yellow); color:var(--ink); }.ongoing-item strong,.ongoing-item span { display:block; }.ongoing-item span { font-size:12px; }.display-table-wrap { margin-top:18px; overflow:auto; }.display-table { width:100%; border-collapse:collapse; border-radius:12px; overflow:hidden; background:#fff; color:var(--ink); }.display-table th,.display-table td { padding:11px; border-bottom:1px solid #dbe6ed; font-size:14px; text-align:left; }.display-table th { background:#e8f2f8; color:var(--navy); white-space:nowrap; }.status-open { color:#725100; font-weight:800; }.status-resolved { color:#17633b; font-weight:800; }.empty { padding:18px; color:#c7dfec; text-align:center; }footer { margin-top:14px; color:#c7dfec; font-size:12px; text-align:center; }
+@media (max-width:900px) { .display-layout { grid-template-columns:1fr 1fr; grid-template-areas:"task task" "rates reminders"; }.ongoing-list { grid-template-columns:1fr; } } @media (max-width:560px) { .display-head,.section-head { flex-direction:column; align-items:flex-start; }.display-date { text-align:left; }.display-layout { grid-template-columns:1fr; grid-template-areas:"task" "rates" "reminders"; } }
+
+/* Ongoing follow-up is intentionally shown on the employee home page. */
+.display-layout { grid-template-areas:"task rates reminders"; }
+.ongoing-section { display:none; }
+.rate-pair { grid-template-columns:1fr; gap:12px; }
+.rate-card strong { margin:5px 0; font-size:clamp(23px,2.4vw,38px); line-height:1.08; white-space:nowrap; }
+@media (max-width:900px) { .display-layout { grid-template-areas:"task task" "rates reminders"; } }
+@media (max-width:560px) { .display-layout { grid-template-areas:"task" "rates" "reminders"; } }
+
+/* The public screen keeps the ongoing tracker; direct editing is on the employee home page. */
+.display-layout { grid-template-areas:"task rates reminders" "task ongoing ongoing"; }
+.ongoing-section { display:block; }
+@media (max-width:900px) { .display-layout { grid-template-areas:"task task" "rates reminders" "ongoing ongoing"; } }
+@media (max-width:560px) { .display-layout { grid-template-areas:"task" "rates" "reminders" "ongoing"; } }
+
+.rate-pair small { font-size:14px; font-weight:800; color:var(--white); }

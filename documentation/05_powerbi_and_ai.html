@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Power BI and future AI integration | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
+<main><article class="doc"><h1>Power BI and future AI integration</h1>
+<h2>Power BI</h2>
+<p>Power BI should read the reporting schema through the dedicated <code>slurry_powerbi</code> account:</p>
+<ul>
+<li><code>system_import.production_records</code></li>
+<li><code>system_import.abnormality_reports</code></li>
+</ul>
+<p>Use the factory server&#x27;s internal hostname/IP and MySQL port 3306 only from the approved manager computer or on-premises data gateway. The account must have <code>SELECT</code> only. It must not use the web application&#x27;s MySQL account.</p>
+<p>For Power BI Service refresh, install the standard on-premises data gateway on an always-on approved computer and allow it to reach the factory server. Do not expose MySQL to the internet to make refresh work.</p>
+<p>Power BI is a reporting reader. It should not write back to operational MySQL tables.</p>
+<p>A weekly or monthly Power BI refresh is recommended for this factory setup and has negligible impact on GNEM. Keep refreshes scheduled outside peak reporting periods; do not allow many individual users to force simultaneous direct-query refreshes against the operational database.</p>
+<h2>AI: current status</h2>
+<p>The running application has rule-based exception analysis, not a connected LLM. It checks yield, plan variance, severity, downtime, and incomplete abnormality reports. These results are manager-only.</p>
+<h2>AI: safe future uses</h2>
+<ul>
+<li>Plain-language daily summaries of already-authorized records.</li>
+<li>Trend detection across repeated abnormalities, machines, or shifts.</li>
+<li>Draft investigation questions for manager review.</li>
+<li>Explanations of dashboard changes with source record IDs.</li>
+</ul>
+<h2>AI: prohibited behaviour</h2>
+<ul>
+<li>Do not expose AI analysis to operators by default.</li>
+<li>Do not send raw employee free text, secrets, or unnecessary personal data to an external provider.</li>
+<li>Do not permit AI to edit records, close tracker items, change thresholds, or contact people automatically.</li>
+<li>Do not put an AI API key in JavaScript, Power BI, a shared drive, or a browser.</li>
+</ul>
+<h2>AI deployment pattern</h2>
+<p>When approved, run AI as a manager-only server-side service with its own read-only SQL account. Retrieve only a bounded approved data set; validate structured output; log request metadata and human approval; and store generated summaries separately from source records. Review provider privacy, data retention, cost, and regional processing terms before use.</p></article><p class="footer">Generated from 05_powerbi_and_ai.md. Update the Markdown source and run <code>python scripts/build_docs.py</code>.</p></main></body></html>

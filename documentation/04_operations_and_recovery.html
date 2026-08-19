@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Operations, backup, and recovery | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
+<main><article class="doc"><h1>Operations, backup, and recovery</h1>
+<h2>Daily operating checks</h2>
+<ul>
+<li>[ ] Factory server is powered on and reachable through the internal HTTPS link.</li>
+<li>[ ] MySQL service, web app service, and HTTPS proxy service are running.</li>
+<li>[ ] Employees use <code>https://slurry-management.local</code>; a certificate warning is an issue to resolve, not something to bypass.</li>
+<li>[ ] Disk space is sufficient for MySQL and backups.</li>
+<li>[ ] The latest manual backup completed successfully.</li>
+<li>[ ] A sample operator entry can be saved and viewed in its record table.</li>
+</ul>
+<h2>Backups</h2>
+<p>The included script creates a consistent MySQL <code>.sql</code> backup. To keep that backup encrypted at rest, set its destination to a separate BitLocker-encrypted data drive or an IT-managed encrypted backup location. Do not store backups in the MySQL live-data folder or the project folder.</p>
+<p>Example concept (adapt credentials and backup path; do not place passwords in a script):</p>
+<pre><code>mysqldump --single-transaction --databases slurry_management system_import &gt; D:\ApprovedBackups\slurry_YYYY-MM-DD.sql</code></pre>
+<p>The backup task must run under a restricted account and write only to the approved backup location. Verify completion, file size, and restore capability—not merely that a file exists.</p>
+<h2>Current backup process: manager-initiated manual backup</h2>
+<p>In the manager workspace, unlock the page with the manager PIN and select <strong>Create manual backup / 创建手动备份</strong>. The server runs <code>scripts\backup_factory_database.ps1</code>, creates a consistent MySQL <code>.sql</code> backup using <code>--single-transaction</code>, and stores it in <code>BACKUP_DIRECTORY</code> (default <code>C:\GNEM_Backups</code>). The backup is never downloaded to the browser and database credentials are never shown in the page.</p>
+<p>For this pilot, if the optional <code>DB_BACKUP_USER</code> and <code>DB_BACKUP_PASSWORD</code> are blank, the backup script uses the private application database credentials in <code>.env</code>. When the system is formally deployed, replace that fallback with a separate backup-only MySQL account and an encrypted/off-server backup destination.</p>
+<p>The project keeps <code>scripts\install_maintenance_tasks.ps1</code> as an optional future scheduler. Do not run it for the current manual-backup process. If automatic backups are introduced later, configure a separate backup account, protected destination, retention period, and restore test first.</p>
+<h2>Restore test</h2>
+<p>At least quarterly, restore a recent backup to a separate test MySQL instance:</p>
+<ul>
+<li>Confirm the backup file can be read.</li>
+<li>Restore <code>slurry_management</code> and <code>system_import</code> to a non-production test server.</li>
+<li>Confirm production and abnormality record counts are plausible.</li>
+<li>Confirm recent records and field definitions are present.</li>
+<li>Record the date, operator, backup tested, and result.</li>
+</ul>
+<p>Never experiment with a restore on the live production database.</p>
+<h2>Incident response</h2>
+<table><thead><tr><th>Situation</th><th>Immediate action</th></tr></thead><tbody><tr><td>Server unavailable</td><td>Tell operators entries are not being saved; use approved paper contingency records; contact IT</td></tr><tr><td>Suspected unauthorized access</td><td>Disconnect the server from the network if directed by IT; preserve logs; rotate passwords; investigate before reconnecting</td></tr><tr><td>Incorrect record</td><td>Use the approved tracker/update process and document the correction; do not directly edit MySQL tables without authorization</td></tr><tr><td>Database corruption/hardware failure</td><td>Stop the application, preserve evidence, restore to replacement hardware from the latest verified backup, validate before reopening entry</td></tr></tbody></table>
+<h2>Application updates</h2>
+<ul>
+<li>Back up the database and project folder.</li>
+<li>Test new code on a non-production copy when possible.</li>
+<li>Put the server into a short maintenance window.</li>
+<li>Copy the approved code update.</li>
+<li>Back up before applying any new migration.</li>
+<li>Run migrations once with the temporary migration administrator account.</li>
+<li>Restore the restricted web-app account, restart services, and run the acceptance checks.</li>
+</ul>
+<p>Never edit an already applied migration. Add a new numbered migration instead.</p><h2>HTTPS recovery check</h2><p>If employees cannot connect, run <code>Start_GNEM_Slurry_Tracker.cmd</code> on the factory server. If the script reports a Caddy error, inspect <code>logs\caddy.stderr.log</code>. Confirm that port 443 is listening, the server is awake, and the device has the required hosts/DNS entry and trusted factory root certificate. Do not work around the issue by returning users to port 5000.</p></article><p class="footer">Editable HTML operations guide. Update this file directly when the factory setup changes.</p></main></body></html>

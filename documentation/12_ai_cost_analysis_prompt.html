@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>GNEM AI Cost Analysis Prompt Guide</title><link rel="stylesheet" href="assets/docs.css"></head><body><main>
+<h1>AI Cost Analysis Prompt Guide</h1>
+<p>This document replaces employee cost-failure checkboxes. Employees do not enter cost categories. A manager-only AI process may suggest them from operational records.</p>
+<h2>Data boundary</h2>
+<p>Give the model a read-only, selected record payload from <code>system_import.production_records</code> and <code>system_import.abnormality_reports</code>. Do not give it credentials, passwords, audit events, manager sessions, or unrestricted database access. The AI service should use a separate MySQL account with <code>SELECT</code> only, ideally through a restricted view or application query.</p>
+<h2>Cost-analysis input</h2>
+<p>For each event, send: event date/time, machine, process type, event type, severity/priority, resolved status, expected/actual finish, calculated duration, effective-time-cost flag, description, immediate action, solution, and relevant same-day production context (formula, planned, actual, qualified, achievement rate, qualified rate, notes).</p>
+<h2>Prompt template</h2>
+<pre>You are a factory cost-impact analyst. Use only the supplied record data. Do not invent monetary values, root causes, or safety conclusions. Return JSON only:
+{"suggested_cost_categories":["lost_production"],"confidence":0.0,"evidence":["short factual reason"],"data_gaps":["missing information"],"manager_questions":["question requiring confirmation"]}
+Allowed categories: lost_production, scrap_rework, material_loss, maintenance_repair, energy_waste, labour_overtime, customer_delivery_impact, safety_environmental_impact.
+A suggestion is advisory only; a manager must approve it before reporting.</pre>
+<h2>Storage recommendation</h2>
+<p>Keep raw operational tables as the source of truth. Add a separate manager-only AI-results table later for prompt version, input record IDs, model, result JSON, confidence, approval decision, reviewer, and timestamps. Do not overwrite employee records with AI output.</p>
+</main></body></html>

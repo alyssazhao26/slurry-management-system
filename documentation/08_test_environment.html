@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Test/staging environment setup | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
+<main><article class="doc"><h1>Test/staging environment setup</h1>
+<h2>Purpose</h2>
+<p>Staging is a separate, non-production copy of the system used to validate updates before they reach operators. It is the required safety gate for database migrations, UI changes, manager permissions, Power BI changes, and future AI work.</p>
+<h2>Minimum setup</h2>
+<ul>
+<li>A separate Windows computer or isolated virtual machine, not the factory production server.</li>
+<li>Separate MySQL instance/database: <code>slurry_management_test</code> plus <code>system_import</code> created by migrations.</li>
+<li>Separate restricted MySQL account: <code>slurry_test_app@localhost</code>.</li>
+<li>Separate test hostname, TLS certificate, <code>.env</code>, manager PIN, and Power BI test workspace.</li>
+<li>Sanitized representative records only. Do not copy personal/free-text sensitive production data without approval.</li>
+</ul>
+<p>Copy <code>deployment/environments/.env.test.example</code> to the test server as <code>.env</code>, replace every placeholder locally, install dependencies, and apply migrations with the temporary test migration administrator.</p>
+<h2>Acceptance test baseline</h2>
+<p>Before every release, confirm:</p>
+<ul>
+<li>Production record saves and appears in history.</li>
+<li>Invalid qualified quantity is rejected.</li>
+<li>Abnormality report saves and open tracker updates work.</li>
+<li>Operator cannot open analysis/dashboard endpoints.</li>
+<li>Manager PIN unlocks dashboard, analysis, and field configuration; sign-out ends access.</li>
+<li>Power BI test user can read reporting tables but cannot change them.</li>
+<li>New/changed fields appear correctly and are stored in MySQL.</li>
+<li>Migration runs once and is safe when the application restarts.</li>
+<li>Regression tests, release verification, and a basic performance check pass.</li>
+</ul>
+<h2>Promotion rule</h2>
+<p>Only the exact commit tested in staging may be tagged and promoted to production. If code changes after acceptance, repeat the staging cycle.</p></article><p class="footer">Generated from 08_test_environment.md. Update the Markdown source and run <code>python scripts/build_docs.py</code>.</p></main></body></html>

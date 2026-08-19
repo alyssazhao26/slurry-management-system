@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Release pipeline and feature delivery | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
+<main><article class="doc"><h1>Release pipeline and feature delivery</h1>
+<h2>Environments</h2>
+<table><thead><tr><th>Environment</th><th>Purpose</th><th>Database</th><th>Who uses it</th></tr></thead><tbody><tr><td>Development</td><td>Build and debug a feature</td><td><code>slurry_management_dev</code> only</td><td>Developers</td></tr><tr><td>Test/staging</td><td>Validate the release in a production-like setup</td><td><code>slurry_management_test</code> only</td><td>Developer, manager tester, IT</td></tr><tr><td>Production</td><td>Live factory operation</td><td><code>slurry_management</code></td><td>Operators, managers, Power BI</td></tr></tbody></table>
+<p>Never point development or test configuration at the production database. Use the templates in <code>deployment/environments</code>; actual <code>.env</code> files remain private to each machine.</p>
+<h2>Standard feature flow</h2>
+<pre><code>Feature request → scope/acceptance criteria → feature branch → development tests
+→ pull-request review → staging deployment + user acceptance → tagged release
+→ production backup + deployment → smoke test → monitoring → release record</code></pre>
+<ul>
+<li>Write the business need, users affected, data fields, success criteria, security/privacy impact, and rollback plan.</li>
+<li>Create a branch such as <code>feature/tracker-escalation</code> from the protected main branch.</li>
+<li>Implement code, tests, documentation, and a new numbered migration if schema changes are required.</li>
+<li>Run <code>python scripts/verify_release.py</code> and <code>pytest</code> locally.</li>
+<li>Open a pull request. CI must pass before merge.</li>
+<li>Deploy the approved commit to the isolated test/staging server. Apply migrations against the test database only.</li>
+<li>Manager/operator tester completes acceptance cases, including permission checks and Power BI impact.</li>
+<li>Update <code>CHANGELOG.md</code>; create an annotated Git tag such as <code>v1.2.0</code>.</li>
+<li>During a scheduled production window, take a verified database backup, deploy exactly that tag, apply new migrations once, and run the production smoke test.</li>
+<li>Record the release owner, time, backup reference, migration list, test result, and outcome.</li>
+</ul>
+<h2>Database migration rules</h2>
+<ul>
+<li>Migrations are forward-only and sequential: <code>006_description.sql</code>, then <code>007_description.sql</code>.</li>
+<li>Never edit a migration that ran in any shared/test/production environment.</li>
+<li>Test every migration on a restored copy of production-like data before production.</li>
+<li>Create backward-compatible changes first: add new columns/tables, deploy code, migrate data, then retire old fields in a later release.</li>
+<li>A code rollback does not automatically undo a database migration. For a risky migration, create and test a specific recovery migration or restore plan.</li>
+</ul>
+<h2>Production deployment checklist</h2>
+<ul>
+<li>[ ] Approved Git tag and changelog entry.</li>
+<li>[ ] CI, <code>pytest</code>, and <code>python scripts/verify_release.py</code> passed.</li>
+<li>[ ] Staging user acceptance completed.</li>
+<li>[ ] Privacy/security impact reviewed.</li>
+<li>[ ] Verified database backup and restore point recorded.</li>
+<li>[ ] Maintenance window communicated.</li>
+<li>[ ] New migration list reviewed; migration administrator account available temporarily.</li>
+<li>[ ] Deploy exact tagged source to the factory server.</li>
+<li>[ ] Install locked dependency versions and restart services.</li>
+<li>[ ] Run migrations once, then restore restricted application credentials.</li>
+<li>[ ] Smoke test operator entry, manager PIN, tracker permissions, and Power BI read-only access.</li>
+<li>[ ] Monitor errors and record release completion.</li>
+</ul>
+<h2>Rollback decision</h2>
+<p>If the smoke test fails, stop further use, return the application code to the last known-good tag, and use the pre-deployment backup/recovery plan if data integrity is at risk. Do not delete production data to make a rollback appear successful. Escalate to IT/management for any database restoration.</p></article><p class="footer">Generated from 07_release_pipeline.md. Update the Markdown source and run <code>python scripts/build_docs.py</code>.</p></main></body></html>

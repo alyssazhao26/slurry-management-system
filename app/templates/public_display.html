@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#06233f">
+  <title>GNEM Daily Factory Display</title>
+  <link rel="stylesheet" href="/static/display.css">
+</head>
+<body>
+  <main class="display-shell">
+    <header class="display-head">
+      <div><span>GNEM SLURRY PRODUCTION TRACKER</span><h1>Daily Factory Display / 每日工厂看板</h1></div>
+      <div class="display-date"><strong id="display-date">—</strong><small id="last-updated">Loading / 加载中</small></div>
+    </header>
+    <section class="display-layout">
+      <section class="display-section task-section">
+        <div class="section-head"><h2>Today's task / 今日任务</h2><span>Today only / 仅当日</span></div>
+        <div id="task-details" class="display-task-list"></div>
+      </section>
+      <article class="display-section rate-card production-rates-card"><div class="rate-pair"><div><small>Achievement Rate / 达成率</small><strong id="achievement-rate">—</strong></div><div><small>Qualified Rate / 合格率</small><strong id="qualified-rate">—</strong></div></div><small id="achievement-note" hidden></small><small id="qualified-note" hidden></small></article>
+      <section class="display-section reminder-section"><div class="section-head"><h2>Reminders / 提醒事项</h2><span>Today / 当日</span></div><div id="display-reminders" class="display-reminder-list"></div></section>
+      <section class="display-section ongoing-section">
+        <div class="section-head"><h2>Ongoing issue tracker / 进行中问题追踪</h2><span>Requires follow-up / 需跟进</span></div>
+        <div id="ongoing-events" class="ongoing-list"></div>
+      </section>
+    </section>
+    <section class="display-section event-detail-section">
+      <div class="section-head"><h2>Event details / 事件明细</h2><span id="event-detail-date">Today / 当日</span></div>
+      <div id="event-tracker" class="display-table-wrap"></div>
+    </section>
+    <footer>Read-only factory display / 只读工厂展示屏 · Detailed records are entered in GNEM / 详细记录请在 GNEM 系统中录入</footer>
+  </main>
+  <script src="/static/display.js"></script>
+</body>
+</html>

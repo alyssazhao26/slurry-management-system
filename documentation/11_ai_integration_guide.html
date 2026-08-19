@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI integration guide | GNEM</title>
+<link rel="stylesheet" href="assets/docs.css">
+</head>
+<body>
+<header class="top">
+<a href="index.html">
+<strong>GNEM Slurry Production Tracker</strong>
+<span>System documentation</span>
+</a>
+</header>
+<main>
+<article class="doc">
+<h1>Future AI integration guide / 未来 AI 集成指南</h1>
+<p>This guide is provider-neutral. You may write your own LLM integration later; do not put API keys, prompts, or model calls in the employee browser.</p>
+<h2>Approved source data</h2>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Useful data</th>
+<th>Use for AI</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>system_import.production_records</code>
+</td>
+<td>Date, shift, J1–J8 machine, formula, batch, planned/actual/qualified quantities, pending-qualified flag, achievement rate, qualified rate, notes, timestamps.</td>
+<td>Production summary, variance explanation, low yield/quality patterns, missing-qualified follow-up.</td>
+</tr>
+<tr>
+<td>
+<code>system_import.abnormality_reports</code>
+</td>
+<td>Date, time range, machine, Semi/Auto type, event type, severity, description, immediate action, calculated duration, resolved state, time-cost flag, cost-failure JSON list, responsible person, target/actual finish, solution, timestamps.</td>
+<td>Cost-failure classification suggestions, event summaries, repeated-issue patterns, overdue-event review.</td>
+</tr>
+<tr>
+<td>
+<code>system_import.cost_failure_types</code>
+</td>
+<td>Active type code, bilingual display name, definition.</td>
+<td>Allowed labels for structured cost-failure classification.</td>
+</tr>
+<tr>
+<td>
+<code>system_import.event_type_options</code>
+</td>
+<td>Active event-type choices and display order.</td>
+<td>Valid event taxonomy for classification and trend analysis.</td>
+</tr>
+<tr>
+<td>
+<code>system_import.field_definitions</code>
+</td>
+<td>Manager-configured optional form fields and choices.</td>
+<td>Interpret custom fields only when approved for AI use.</td>
+</tr>
+</tbody>
+</table>
+<p>Do not send <code>slurry_management.audit_events</code>, manager sessions, passwords, PINs, API keys, or unnecessary personal information to an external model.</p>
+<h2>Recommended account and permission boundary</h2>
+<p>Create a separate <code>slurry_ai</code> MySQL account, restricted to the manager/AI computer IP. Grant it <strong>SELECT only</strong> on <code>system_import.*</code>. It must not update employee records, access <code>slurry_management</code>, or use a wildcard host such as <code>'%'</code>. Use a separate AI account even if Power BI already has read-only access, so its password can be rotated without breaking reporting.</p>
+<pre>
+<code>CREATE USER 'slurry_ai'@'MANAGER_AI_COMPUTER_IP' IDENTIFIED BY 'LONG_RANDOM_PASSWORD';&#10;GRANT SELECT ON system_import.* TO 'slurry_ai'@'MANAGER_AI_COMPUTER_IP';&#10;FLUSH PRIVILEGES;</code>
+</pre>
+<h2>Safe data flow</h2>
+<pre>
+<code>Manager-only screen → your server-side AI service → read-only slurry_ai query of system_import → curated/redacted record JSON → chosen model API over HTTPS → structured manager review result</code>
+</pre>
+<p>The employee browser must never call the model API directly. Store the model API key only in the manager/AI service environment variables, for example <code>LLM_API_KEY</code>; keep it out of GitHub, browser JavaScript, and SQL tables.</p>
+<h2>Best first AI use cases</h2>
+<ol>
+<li>
+<strong>Cost-failure suggestion:</strong> send an event's description, event type, severity, machine type, duration, and the active definitions from <code>cost_failure_types</code>. Require JSON containing only allowed type codes, a confidence level, and a short bilingual explanation. Show it as a manager suggestion; do not automatically change the employee record.</li>
+<li>
+<strong>Manager daily summary:</strong> combine selected-day production totals and event data into production variance, qualified-pending items, open/overdue events, repeated event types, and questions for follow-up.</li>
+<li>
+<strong>Recurring-issue review:</strong> use SQL first to group by machine, formula, event type, severity, and date range. Give aggregates to the LLM to explain patterns. This is cheaper and safer than sending every historical raw record.</li>
+<li>
+<strong>Data-quality check:</strong> flag missing times, missing qualified quantities, invalid-looking descriptions, and unresolved events past target finish. Rule-based checks remain source of truth; the LLM explains rather than decides.</li>
+</ol>
+<h2>What AI cannot reliably do yet</h2>
+<p>Because data is manually entered and no machine sensor/PLC data is connected, the model cannot diagnose machine condition or predict failure with engineering reliability. It can identify record patterns and suggest questions, not prove root cause or make safety, maintenance, or production decisions.</p>
+<h2>Result storage and audit trail</h2>
+<p>When you later implement your service, create a manager-only analysis table in <code>slurry_management</code>, not in reporting tables. Store analysis ID, source record IDs/date range, model/provider name, model version, prompt version, run time, status, structured JSON result, reviewer, reviewer decision, and a hash of supplied input. Avoid storing API keys and unnecessary raw prompts. Never let an AI response directly close an event, overwrite a cost-failure type, or modify a production record.</p>
+<h2>Before enabling any external API</h2>
+<ul>
+<li>Confirm which data can leave the factory network and review the provider retention/training settings.</li>
+<li>Use HTTPS, server-side timeouts, rate limits, retries with idempotency, and a per-run cost limit.</li>
+<li>Validate every model response against an allow-list/schema before displaying or storing it.</li>
+<li>Keep a manager approval step and audit record for every result.</li>
+<li>Start with a small historical test set and evaluate accuracy against manager-labelled examples before showing suggestions.</li>
+</ul>
+</article>
+<p class="footer">Editable HTML AI guide. It intentionally contains no model-provider code.</p>
+</main>
+</body>
+</html>

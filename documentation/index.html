@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GNEM Slurry Production Tracker documentation | GNEM</title>
+<link rel="stylesheet" href="assets/docs.css">
+</head>
+<body>
+<header class="top">
+<a href="index.html">
+<strong>GNEM Slurry Production Tracker</strong>
+<span>System documentation</span>
+</a>
+</header>
+<main>
+<article class="doc">
+<h1>GNEM Slurry Production Tracker documentation</h1>
+<p>This documentation describes the intended production design: <strong>one always-on factory server</strong> running the employee web application and MySQL locally. Employees use a browser link; they do not access MySQL. Managers use the same link for a PIN-protected workspace. Power BI and any future AI service use separate read-only database credentials.</p>
+<h2>Documents</h2>
+<table>
+<thead>
+<tr>
+<th>Document</th>
+<th>Use it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<a href="01_deployment.html">01 Deployment</a>
+</td>
+<td>Installing and publishing the application on the factory server</td>
+</tr>
+<tr>
+<td>
+<a href="02_system_architecture.html">02 System architecture</a>
+</td>
+<td>Understanding data flow, components, and availability</td>
+</tr>
+<tr>
+<td>
+<a href="03_security_and_privacy.html">03 Security and privacy</a>
+</td>
+<td>Accounts, firewall, privacy, and AI safeguards</td>
+</tr>
+<tr>
+<td>
+<a href="04_operations_and_recovery.html">04 Operations and recovery</a>
+</td>
+<td>Daily operation, backups, restore testing, and updates</td>
+</tr>
+<tr>
+<td>
+<a href="05_powerbi_and_ai.html">05 Power BI and AI</a>
+</td>
+<td>Read-only reporting and the safe future AI boundary</td>
+</tr>
+<tr>
+<td>
+<a href="06_user_guide.html">06 User guide</a>
+</td>
+<td>Operator and manager functions</td>
+</tr>
+<tr>
+<td>
+<a href="07_release_pipeline.html">07 Release pipeline</a>
+</td>
+<td>Feature development, staging, migration, and production promotion</td>
+</tr>
+<tr>
+<td>
+<a href="08_test_environment.html">08 Test environment</a>
+</td>
+<td>Building and using the isolated staging environment</td>
+</tr>
+</tbody>
+</table>
+<p>
+<strong>New:</strong> <a href="09_https_certificate_setup.html">09 HTTPS certificate setup</a> — factory URL, local certificate trust, firewall, and troubleshooting.</p>
+<p>
+<strong>Production:</strong> <a href="10_final_production_cutover.html">10 Final production cutover</a> — schemas, MySQL accounts, clean release contents, and final-server checklist.</p>
+<p>
+<strong>Future AI:</strong> <a href="11_ai_integration_guide.html">11 AI integration guide</a> — approved tables, read-only account, data flow, and safeguards for your own model code.</p>
+<h2>Current capability statement</h2>
+<ul>
+<li>Operators do not sign in. They can submit forms, view recent operational records, and update limited fields on open tracker items.</li>
+<li>The manager workspace is PIN-protected. It shows dashboards, rule-based exceptions, and form configuration.</li>
+<li>Reporting tables are <code>system_import.production_records</code> and <code>system_import.abnormality_reports</code>.</li>
+<li>Rule-based analysis is active. An external generative-AI API is <strong>not</strong> connected yet.</li>
+<li>Records write directly to MySQL while the factory server is available. Browser offline queuing is <strong>not</strong> enabled yet.</li>
+</ul>
+<p>Do not treat a development installation as production until the deployment and security checklists have been completed by the person responsible for factory IT.</p>
+<h2>Browser version</h2>
+<p>These are editable HTML documents. Open <code>documentation/index.html</code> in a browser; edit the relevant HTML file directly when the deployment changes.</p>
+</article>
+<p class="footer">Editable HTML documentation index.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>System architecture | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
+<main><article class="doc"><h1>System architecture</h1>
+<h2>Components and trust boundary</h2>
+<pre><code>Employee browsers -- HTTPS --&gt; Factory server
+                               |- Reverse proxy → web application
+                               `- MySQL (local only)
+
+Manager computer -- HTTPS --&gt; Factory server
+Power BI / future AI -- read-only SQL --&gt; Factory server</code></pre>
+<p>Employee devices are not trusted with database credentials. The boundary is the HTTPS web application. The browser submits a record; the app validates and writes it to local MySQL in one transaction.</p>
+<h2>Data flow</h2>
+<ul>
+<li>Employee submits a production or abnormality form.</li>
+<li>HTTPS delivers it to the factory server application.</li>
+<li>The app validates quantities, dates, permitted tracker fields, and form data.</li>
+<li>The app writes the record to <code>system_import</code> and records an audit event.</li>
+<li>Rule-based checks create manager-only exceptions when conditions are met.</li>
+<li>Manager browser view reads manager-only summaries through the web app.</li>
+<li>Power BI and future AI read through their own read-only MySQL account.</li>
+</ul>
+<h2>Database ownership</h2>
+<table><thead><tr><th>Database/schema</th><th>Purpose</th></tr></thead><tbody><tr><td><code>slurry_management</code></td><td>Application model, audit events, exception queue, migrations</td></tr><tr><td><code>system_import</code></td><td>Reporting source tables: production, abnormalities, form definitions, sync receipts</td></tr></tbody></table>
+<p>MySQL data files stay on the factory server local SSD. A shared drive is appropriate for encrypted backups, not the live MySQL data directory.</p>
+<h2>Availability</h2>
+<table><thead><tr><th>Component unavailable</th><th>Effect</th></tr></thead><tbody><tr><td>Employee browser</td><td>That employee cannot enter records; other devices continue</td></tr><tr><td>Factory server/MySQL</td><td>No immediate entry, dashboard, or Power BI refresh; the current system does not silently queue records in browsers</td></tr><tr><td>Manager computer</td><td>Operator entry continues</td></tr><tr><td>Power BI/future AI</td><td>Operator entry continues</td></tr></tbody></table>
+<p>The current system stores records directly while the server is online. It has a server-side idempotent sync endpoint for later development, but browser offline storage/sync must not be assumed active.</p></article><p class="footer">Generated from 02_system_architecture.md. Update the Markdown source and run <code>python scripts/build_docs.py</code>.</p></main></body></html>

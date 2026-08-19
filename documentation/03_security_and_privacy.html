@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Security and privacy | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
+<main><article class="doc"><h1>Security and privacy</h1>
+<h2>Access model</h2>
+<table><thead><tr><th>Role</th><th>Access</th></tr></thead><tbody><tr><td>Operator</td><td>No sign-in; submit operational forms, view normal records, and update approved fields on open tracker items</td></tr><tr><td>Manager</td><td>PIN-protected workspace; dashboards, rule-based exceptions, complete tracker, configurable fields</td></tr><tr><td>Web application account</td><td>Local MySQL <code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code> only</td></tr><tr><td>Power BI/future AI account</td><td>Read-only <code>SELECT</code> only; separate account and password</td></tr><tr><td>Migration administrator</td><td>Temporary database-definition permissions only while migrations are applied</td></tr></tbody></table>
+<p>No employee browser receives a MySQL password. Never share the manager PIN with employees.</p>
+<h2>Application protections currently implemented</h2>
+<ul>
+<li>Secure/HttpOnly/same-site manager session cookie in production.</li>
+<li>Manager session expires after eight hours.</li>
+<li>Manager PIN comparison avoids timing leaks and is throttled after repeated failures.</li>
+<li>State-changing requests require a per-session anti-forgery token.</li>
+<li>Production mode requires HTTPS proxy configuration, an explicit allowed-host list, a non-default secret key, and a non-default manager PIN.</li>
+<li>Browser security headers reduce framing, unsafe content handling, and referrer exposure.</li>
+<li>Record insertion uses database transactions and offline idempotency receipt IDs.</li>
+</ul>
+<h2>Required infrastructure protections</h2>
+<ul>
+<li>Place the server in restricted physical space. Employees should use their own computers, not the server console.</li>
+<li>Enable BitLocker/full-disk encryption and automatic Windows lock.</li>
+<li>Use a dedicated non-administrator Windows account for the application service.</li>
+<li>Allow port 443 only from the factory network. Do not expose the service to the public internet.</li>
+<li>Use <code>https://slurry-management.local</code>, never <code>http://...:5000</code>, from employee devices. The internal Caddy certificate must be trusted on each approved device; see <a href="09_https_certificate_setup.html">HTTPS certificate setup</a>.</li>
+<li>Block MySQL port 3306 from employee devices. Permit it only for a fixed Power BI gateway/manager IP where needed.</li>
+<li>Keep Windows, MySQL, Python dependencies, and endpoint protection current.</li>
+<li>Keep <code>.env</code>, database backups, certificate keys, and MySQL passwords out of Git and shared folders.</li>
+</ul>
+<h2>Privacy principles</h2>
+<p>Collect only data needed for factory operations. Avoid personal details in free-text notes unless there is a documented business need. Do not store passwords, API keys, medical information, government IDs, or sensitive HR data in operational fields.</p>
+<p>Define a retention period approved by management/IT. Restrict access to backups, Power BI workspaces, exports, and manager dashboards. Treat exports as operational data and keep them in an approved location.</p>
+<h2>AI guardrails</h2>
+<p>Any future external AI integration must be manager-only and server-side. The browser must never contain an API key. AI should receive the minimum necessary approved data, return structured summaries, and never autonomously edit records, close abnormalities, send external messages, or make safety decisions. Keep human approval, logging, prompt-injection resistance, and provider data-retention review in place before activation.</p>
+<h2>Future offline queue boundary</h2>
+<p>Browser offline queuing is not active in this release. If it is built later, it is approved only on dedicated factory devices with BitLocker/full-disk encryption, automatic locking, and restricted kiosk accounts. Each device must hold no more than 1,000 unsynced records for seven days, warn after 24 hours without successful sync, and delete a local record only after central SQL confirms receipt. It must never hold passwords, manager PINs, API keys, personal data, or attachments.</p></article><p class="footer">Generated from 03_security_and_privacy.md. Update the Markdown source and run <code>python scripts/build_docs.py</code>.</p></main></body></html>
