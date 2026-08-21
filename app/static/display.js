@@ -63,11 +63,23 @@ async function refreshDisplay() {
 }
 refreshDisplay(); setInterval(refreshDisplay, 15000);
 if (autoScroll) {
-  setInterval(() => {
+  const pixelsPerSecond = 22;
+  let scrollPosition = window.scrollY;
+  let previousFrame = null;
+  const advanceAutoScroll = timestamp => {
+    if (previousFrame === null || document.hidden) previousFrame = timestamp;
+    const elapsed = Math.min(timestamp - previousFrame, 100);
+    previousFrame = timestamp;
     const limit = document.documentElement.scrollHeight - window.innerHeight;
-    if (limit <= 0) return;
-    if (window.scrollY >= limit - 2) window.scrollTo(0, 0);
-    else window.scrollBy(0, 1);
-  }, 45);
+    if (limit > 0) {
+      scrollPosition += pixelsPerSecond * elapsed / 1000;
+      if (scrollPosition >= limit) scrollPosition = 0;
+      window.scrollTo(0, scrollPosition);
+    } else {
+      scrollPosition = 0;
+    }
+    requestAnimationFrame(advanceAutoScroll);
+  };
+  requestAnimationFrame(advanceAutoScroll);
 }
 if (fitScreen) window.addEventListener('resize', () => requestAnimationFrame(fitDisplayToViewport));

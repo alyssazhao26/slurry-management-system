@@ -1,22 +1,28 @@
 :root { --navy:#06233f; --blue:#0b4d7a; --sky:#55bceb; --white:#fff; --yellow:#ffe496; --ink:#102b42; }
 * { box-sizing:border-box; } body { min-height:100vh; margin:0; background:linear-gradient(135deg,var(--navy),var(--blue)); color:var(--white); font:18px/1.4 "Segoe UI",Arial,sans-serif; }
 body.fit-screen { overflow:hidden; }
-body.auto-scroll { font-size:26px; }
-body.auto-scroll .display-shell { padding:32px 42px; }
-body.auto-scroll h1 { font-size:60px; }
-body.auto-scroll .display-head span { font-size:20px; }
-body.auto-scroll .display-date strong { font-size:44px; }
-body.auto-scroll .section-head h2 { font-size:40px; }
+body.auto-scroll { font-size:18px; }
+body.auto-scroll .display-shell { padding:24px 32px; }
+body.auto-scroll h1 { font-size:34.02px; line-height:1.08; }
+body.auto-scroll .display-head span { font-size:14px; }
+body.auto-scroll .display-date strong { font-size:31px; }
+body.auto-scroll .display-layout { grid-template-columns:minmax(0,1.5fr) minmax(230px,.72fr) minmax(0,1.05fr); gap:16px; margin-top:16px; }
+body.auto-scroll .display-section { padding:16px; border-radius:16px; }
+body.auto-scroll .section-head { align-items:flex-start; gap:12px; }
+body.auto-scroll .section-head h2 { font-size:28px; line-height:1.15; }
+body.auto-scroll .ongoing-section .section-head h2 { font-size:24px; }
 body.auto-scroll .section-head span,
-body.auto-scroll footer { font-size:18px; }
-body.auto-scroll .task-group h3 { font-size:32px; }
+body.auto-scroll footer { font-size:13px; }
+body.auto-scroll .task-group h3 { margin:14px 0 7px; font-size:22px; line-height:1.2; }
 body.auto-scroll .display-task-list span,
-body.auto-scroll .display-reminder-list li { font-size:21px; }
-body.auto-scroll .rate-pair small { font-size:20px; }
-body.auto-scroll .rate-card strong { font-size:52px; }
-body.auto-scroll .ongoing-item span { font-size:19px; line-height:1.5; }
+body.auto-scroll .display-reminder-list li { font-size:15px; line-height:1.35; }
+body.auto-scroll .display-task-list li { padding:11px 12px 11px 30px; }
+body.auto-scroll .rate-pair { grid-template-columns:1fr; gap:18px; margin-top:6px; }
+body.auto-scroll .rate-pair small { font-size:14px; line-height:1.25; }
+body.auto-scroll .rate-card strong { font-size:38px; }
+body.auto-scroll .ongoing-item span { font-size:14px; line-height:1.4; }
 body.auto-scroll .display-table th,
-body.auto-scroll .display-table td { padding:16px; font-size:20px; }
+body.auto-scroll .display-table td { padding:12px; font-size:14px; }
 body.auto-scroll .display-table th { white-space:normal; line-height:1.25; }
 .display-shell { min-height:100vh; padding:clamp(18px,2.4vw,34px); }.display-head,.section-head { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; }.display-head span { color:var(--sky); font-size:14px; font-weight:800; letter-spacing:1.5px; }h1 { margin:3px 0 0; font-size:clamp(28px,3vw,46px); }.display-date { text-align:right; }.display-date strong { display:block; font-size:clamp(22px,2vw,34px); }small { color:#c7dfec; }
 .display-layout { display:grid; grid-template-columns:2fr 1fr 1fr; grid-template-areas:"task rates reminders" "task ongoing ongoing"; gap:14px; margin:20px 0 14px; }.display-section { border:1px solid #ffffff36; border-radius:20px; background:#ffffff12; box-shadow:0 14px 32px #031a2d38; padding:18px; }.task-section { grid-area:task; }.production-rates-card { grid-area:rates; }.reminder-section { grid-area:reminders; }.ongoing-section { grid-area:ongoing; }.event-detail-section { margin-top:14px; }.section-head h2 { margin:0; font-size:clamp(21px,2.4vw,32px); }.section-head span { color:#c7dfec; font-size:13px; }.rate-card > span { color:#c7dfec; font-weight:700; }.rate-pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:10px 0; }.rate-pair small { display:block; font-size:12px; }.rate-card strong { display:block; margin:6px 0; font-size:clamp(27px,3vw,48px); line-height:1; }.display-reminder-list { display:grid; gap:8px; margin-top:12px; }.display-reminder-list ul { margin:0; padding:0; list-style:none; }.display-reminder-list li { position:relative; padding:8px 8px 8px 24px; border-radius:8px; background:#ffffff12; font-size:14px; }.display-reminder-list li::before { content:"•"; position:absolute; left:9px; color:var(--sky); }

@@ -35,7 +35,7 @@ function show(viewId, recordHistory = true) {
   document.querySelectorAll('.view').forEach(view => view.classList.remove('active'));
   document.querySelector(`#${viewId}`).classList.add('active');
   if (viewId === 'production-records') loadRecords('production', '#production-table');
-  if (viewId === 'tracker') loadRecords('tracker', '#tracker-table');
+  if (viewId === 'tracker') loadRecords('tracker', '#tracker-table', true);
   if (viewId === 'ongoing') loadRecords('ongoing', '#ongoing-table');
   if (viewId === 'daily-report') {
     const dateInput = document.querySelector('#report-date');
@@ -258,7 +258,8 @@ function renderTable(target, rows, fields, tracker = false, pagination = null) {
   const root = document.querySelector(target);
   if (!rows.length) { root.innerHTML = '<p class="empty">No records yet.</p>'; return; }
   const productionFollowup = target === '#production-table';
-  const headers = fields.map(field => `<th>${escapeHtml(field.label)}</th>`).join('') + (tracker ? '<th>Update</th>' : '') + (productionFollowup ? '<th>Qualified follow-up / 合格数量补充</th>' : '');
+  const editableType = productionFollowup ? 'production' : tracker ? 'abnormality' : null;
+  const headers = fields.map(field => `<th>${escapeHtml(field.label)}</th>`).join('') + (tracker ? '<th>Follow-up / 跟进</th>' : '') + (productionFollowup ? '<th>Qualified follow-up / 合格数量补充</th>' : '') + (editableType ? '<th>Edit / 编辑</th>' : '');
   const body = rows.map(row => {
     const cells = fields.map(field => {
       let value = field.key.endsWith('_rate') && row[field.key] !== null && row[field.key] !== undefined
@@ -274,7 +275,8 @@ function renderTable(target, rows, fields, tracker = false, pagination = null) {
     const followupButton = productionFollowup
       ? `<td>${Number(row.qualified_pending) ? `<button class="secondary qualified-followup" data-id="${Number(row.id)}" data-date="${escapeHtml(row.record_date)}" data-machine="${escapeHtml(row.machine_code)}">Add qualified result / 补充合格数量</button>` : '—'}</td>`
       : '';
-    return `<tr>${cells}${updateButton}${followupButton}</tr>`;
+    const editButton = editableType ? `<td><button type="button" class="secondary manager-edit-row" data-record-type="${editableType}" data-record-id="${Number(row.id)}">Edit / 编辑</button></td>` : '';
+    return `<tr>${cells}${updateButton}${followupButton}${editButton}</tr>`;
   }).join('');
   let controls = '';
   if (pagination) {
@@ -547,45 +549,6 @@ document.querySelectorAll('.copy').forEach(button => button.addEventListener('cl
   catch { say('Clipboard access was blocked by this browser. Select the table and copy it manually.'); }
 }));
 
-document.querySelector('#manager-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  try {
-    const response = await fetch('/api/manager/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))),
-    });
-    const data = await response.json();
-    if (!response.ok) { say(data.error || 'Manager access was denied.'); return; }
-    csrfToken = data.csrf_token;
-    document.querySelector('#manager-login').hidden = true;
-    document.querySelector('#manager-content').hidden = false;
-    say('Manager workspace unlocked.');
-    loadDashboard(); loadAnalysis(); loadEventTypes(true); loadManagerStandardFields('production'); loadManagerFields('production'); loadManagerRecordChoices();
-  } catch { say('Manager login could not reach the factory server.'); }
-});
-document.querySelector('#manager-logout').addEventListener('click', async () => {
-  await fetch('/api/manager/logout', {method: 'POST'});
-  window.location.reload();
-});
-
-document.querySelector('#run-manual-backup').addEventListener('click', async () => {
-  const button = document.querySelector('#run-manual-backup');
-  const status = document.querySelector('#backup-status');
-  button.disabled = true;
-  status.textContent = 'Creating backup on the server / 正在服务器上创建备份…';
-  try {
-    const response = await fetch('/api/manager/backup', {method: 'POST'});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Backup failed.');
-    status.textContent = `${data.message} / 备份已完成。`;
-  } catch (error) {
-    status.textContent = `${error.message} / 备份失败，请检查服务器。`;
-  } finally {
-    button.disabled = false;
-  }
-});
-
 const taskMachineOptions = ['J1','J2','J3','J4','J5','J6','J7','J8','J9','J10-1','J10-2','J10-3','J10-4','J10-5'];
 function homeTaskItemMarkup(item = {type: 'cleaning'}) {
   const standardFormula = ['K1-26', 'B1-1', 'E3'].includes(item.formula_code) ? item.formula_code : (item.formula_code ? 'CUSTOM' : '');
@@ -639,21 +602,6 @@ document.querySelector('#open-cost-guide').addEventListener('click', async () =>
   costGuide.showModal();
 });
 document.querySelector('#close-cost-guide').addEventListener('click', () => costGuide.close());
-
-document.querySelector('#cost-type-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const response = await fetch('/api/manager/cost-failure-types', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))),
-  });
-  const data = await response.json();
-  say(response.ok ? `${data.message} / 成本失效类型已保存。` : data.error);
-  if (response.ok) {
-    event.currentTarget.reset();
-    loadCostFailureTypes(true);
-  }
-});
 
 document.querySelector('#event-type-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -710,16 +658,6 @@ document.addEventListener('click', async event => {
   } catch { say('Could not deactivate event type.'); }
 });
 
-async function loadDashboard() {
-  const response = await fetch('/api/manager/dashboard'), data = await response.json();
-  if (!response.ok) { say(data.error); return; }
-  document.querySelector('#metric-records').textContent = data.today_records;
-  document.querySelector('#metric-yield').textContent = data.today_yield === null ? '—' : `${data.today_yield}%`;
-  document.querySelector('#metric-events').textContent = data.open_events;
-  document.querySelector('#metric-downtime').textContent = `${data.downtime_minutes} min`;
-}
-async function loadAnalysis() { await loadRecords('analysis', '#analysis-table'); }
-document.querySelector('#load-analysis').addEventListener('click', loadAnalysis);
 let managerStandardFields = [];
 async function loadManagerStandardFields(formKey) {
   const response = await fetch(`/api/manager/forms/${formKey}/standard-fields`);
@@ -804,24 +742,6 @@ loadHomeTask();
 loadHomeOngoing();
 
 let managerRecordContext = null;
-async function loadManagerRecordChoices() {
-  const type = document.querySelector('#manager-record-load [name="record_type"]').value;
-  const select = document.querySelector('#manager-record-select');
-  select.innerHTML = '<option value="">Loading records / 加载记录</option>';
-  try {
-    const response = await fetch(`/api/records/${type}?page=1&page_size=50`);
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    select.innerHTML = '<option value="">Select a record / 选择记录</option>' + data.records.map(record => {
-      const label = type === 'production'
-        ? `${record.record_date} · ${record.machine_code} · ${record.batch_number} · #${record.id}`
-        : `${record.event_date} · ${record.machine_code} · ${record.event_type} · #${record.id}`;
-      return `<option value="${record.id}">${escapeHtml(label)}</option>`;
-    }).join('');
-  } catch {
-    select.innerHTML = '<option value="">Could not load records / 无法加载记录</option>';
-  }
-}
 const managerEditableFields = {
   production: [
     ['shift_name', 'Shift / 班次', 'text'], ['machine_code', 'Machine / 设备', 'text'], ['formula_code', 'Formula / 配方', 'text'],
@@ -839,30 +759,62 @@ const managerEditableFields = {
 };
 function managerEditControl(key, label, kind, value) {
   const safeValue = escapeHtml(value ?? '');
-  if (kind === 'textarea') return `<label>${label}<textarea name="${key}">${safeValue}</textarea></label>`;
+  const required = ['shift_name', 'machine_code', 'formula_code', 'batch_number', 'planned_quantity', 'actual_quantity', 'machine_type', 'event_type', 'severity', 'start_time', 'end_time', 'duration_minutes', 'is_resolved'].includes(key) ? 'required' : '';
+  if (key === 'event_type') {
+    const options = managerEventTypes.map(option => `<option value="${escapeHtml(option.event_value)}" ${String(value) === option.event_value ? 'selected' : ''}>${escapeHtml(option.display_name)}</option>`).join('');
+    return `<label>${label}<select name="${key}" required>${options}</select></label>`;
+  }
+  if (kind === 'textarea') return `<label>${label}<textarea name="${key}" ${required}>${safeValue}</textarea></label>`;
   if (kind.startsWith('select:')) {
     const options = kind.slice(7).split(',').map(option => { const [optionValue, optionLabel] = option.split('|'); return `<option value="${optionValue}" ${String(value) === optionValue ? 'selected' : ''}>${optionLabel}</option>`; }).join('');
-    return `<label>${label}<select name="${key}">${options}</select></label>`;
+    return `<label>${label}<select name="${key}" ${required}>${options}</select></label>`;
   }
-  return `<label>${label}<input name="${key}" type="${kind}" value="${safeValue}" ${kind === 'number' ? 'step="0.01" min="0"' : ''}></label>`;
+  return `<label>${label}<input name="${key}" type="${kind}" value="${safeValue}" ${kind === 'number' ? 'step="0.01" min="0"' : ''} ${required}></label>`;
 }
-document.querySelector('#manager-record-load').addEventListener('submit', async event => {
-  event.preventDefault();
-  const values = Object.fromEntries(new FormData(event.currentTarget));
-  const response = await fetch(`/api/manager/records/${values.record_type}/${values.record_id}`);
-  const data = await response.json();
+
+function openManagerRecordDialog(type, record = null) {
+  managerRecordContext = {type, id: record?.id || null};
+  const isNew = !record;
+  document.querySelector('#manager-record-dialog-title').textContent = `${isNew ? 'Add' : 'Edit'} ${type === 'production' ? 'production' : 'event'} record / ${isNew ? '添加' : '编辑'}${type === 'production' ? '生产' : '事件'}记录`;
+  document.querySelector('#manager-record-edit-fields').innerHTML = managerEditableFields[type].map(([key, label, kind]) => managerEditControl(key, label, kind, record?.[key])).join('');
+  document.querySelector('#manager-record-edit-status').textContent = '';
+  document.querySelector('#manager-record-dialog').showModal();
+}
+
+document.addEventListener('click', async event => {
+  if (event.target.classList.contains('manager-add-record')) {
+    if (event.target.dataset.recordType === 'abnormality') await loadEventTypes(true);
+    openManagerRecordDialog(event.target.dataset.recordType);
+    return;
+  }
+  if (!event.target.classList.contains('manager-edit-row')) return;
+  const type = event.target.dataset.recordType, id = event.target.dataset.recordId;
+  if (type === 'abnormality') await loadEventTypes(true);
+  const response = await fetch(`/api/manager/records/${type}/${id}`), data = await response.json();
   if (!response.ok) { say(data.error || 'Could not load record.'); return; }
-  managerRecordContext = {type: values.record_type, id: values.record_id};
-  document.querySelector('#manager-record-edit-fields').innerHTML = managerEditableFields[values.record_type].map(([key, label, kind]) => managerEditControl(key, label, kind, data.record[key])).join('');
-  document.querySelector('#manager-record-edit').hidden = false;
+  openManagerRecordDialog(type, data.record);
 });
-document.querySelector('#manager-record-load [name="record_type"]').addEventListener('change', loadManagerRecordChoices);
+document.querySelector('#close-manager-record-dialog').addEventListener('click', () => document.querySelector('#manager-record-dialog').close());
 document.querySelector('#manager-record-edit').addEventListener('submit', async event => {
   event.preventDefault();
   if (!managerRecordContext) return;
   const payload = Object.fromEntries(new FormData(event.currentTarget));
-  const response = await fetch(`/api/manager/records/${managerRecordContext.type}/${managerRecordContext.id}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+  const editing = Boolean(managerRecordContext.id);
+  const path = editing
+    ? `/api/manager/records/${managerRecordContext.type}/${managerRecordContext.id}`
+    : managerRecordContext.type === 'production' ? '/api/production-records' : '/api/abnormality-reports';
+  const response = await fetch(path, {method: editing ? 'PATCH' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
   const data = await response.json();
-  document.querySelector('#manager-record-edit-status').textContent = response.ok ? 'Correction saved / 修正已保存。' : data.error;
-  if (response.ok) { loadDashboard(); loadAnalysis(); }
+  document.querySelector('#manager-record-edit-status').textContent = response.ok ? 'Record saved / 记录已保存。' : data.error;
+  if (response.ok) {
+    if (managerRecordContext.type === 'production') await loadRecords('production', '#production-table');
+    else await loadRecords('tracker', '#tracker-table', true);
+    setTimeout(() => document.querySelector('#manager-record-dialog').close(), 500);
+  }
 });
+
+document.querySelector('#open-manager-fields').addEventListener('click', async () => {
+  await Promise.all([loadEventTypes(true), loadManagerStandardFields('production'), loadManagerFields('production')]);
+  document.querySelector('#manager-fields-dialog').showModal();
+});
+document.querySelector('#close-manager-fields').addEventListener('click', () => document.querySelector('#manager-fields-dialog').close());

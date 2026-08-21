@@ -18,15 +18,15 @@
     </button>
     <nav aria-label="Main navigation / 主导航">
       <button class="nav-link" data-view="production-records">Production records / 生产记录</button>
-      <button class="nav-link" data-view="ongoing">Ongoing abnormalities / 进行中异常</button>
-      <button class="nav-link" data-view="tracker">Abnormality tracker / 异常追踪</button>
-      <button class="nav-link manager-link" data-view="manager">Manager workspace / 管理工作区</button>
+      <button class="nav-link" data-view="ongoing">Ongoing events / 进行中事件</button>
+      <button class="nav-link" data-view="tracker">Event tracker / 事件追踪</button>
+      <button id="open-manager-fields" class="nav-link manager-link">Edit fields / 编辑字段</button>
     </nav>
   </header>
 
   <main>
     <p id="notice" class="notice" aria-live="polite">
-      Operator mode: submit records and view recent data. Analysis stays manager-only. / 操作员模式：提交记录并查看近期数据。分析仅管理层可见。
+      Submit records, review recent data, and complete event follow-up. / 提交记录、查看近期数据并完成事件跟进。
     </p>
 
     <section id="home" class="view active">
@@ -37,7 +37,7 @@
           <p>Record today’s production and event information clearly and complete follow-ups when results are available. / 清晰记录并提交当日生产和事件信息，结果出来后可补充更新。</p>
           <div class="hero-actions">
             <button class="primary" data-view="production">Log production / 记录生产</button>
-            <button class="secondary light" data-view="abnormality">Report abnormality / 报告异常</button>
+            <button class="secondary light" data-view="abnormality">Report event / 报告事件</button>
             <button class="secondary light" data-view="daily-report">Generate report / 生成报告</button>
           </div>
         </div>
@@ -120,6 +120,7 @@
           <p>Most recent central SQL records. Use Copy table for Excel or an approved email. / 最新中央 SQL 记录，可复制到 Excel 或批准的电子邮件。</p>
         </div>
         <div>
+          <button type="button" class="primary manager-add-record" data-record-type="production">Add production / 添加生产记录</button>
           <button class="secondary copy" data-copy="production-table">Copy table / 复制表格</button>
           <button class="primary refresh" data-type="production" data-target="#production-table">Refresh / 刷新</button>
         </div>
@@ -139,7 +140,7 @@
         <div class="section-title">
           <span>02 / RECORD · 记录</span>
           <h1>Event tracker / 事件追踪</h1>
-          <p>Report an event quickly; managers see analysis separately. / 快速报告异常；分析仅管理层可见。</p>
+          <p>Report an event quickly and review it later in the record-management workspace. / 快速报告事件，之后可在记录管理区查看。</p>
         </div>
         <button id="open-cost-guide" type="button" class="secondary">Cost guide / 成本说明</button>
       </div>
@@ -169,8 +170,8 @@
         <label class="wide">Immediate action / 立即措施<textarea name="immediate_action"></textarea></label>
         <div id="abnormality-custom" class="wide dynamic-fields"></div>
         <div class="wide form-actions">
-          <button class="primary">Save abnormality report / 保存异常报告</button>
-          <button type="button" class="secondary" data-view="ongoing">Ongoing abnormalities / 进行中异常</button>
+          <button class="primary">Save event report / 保存事件报告</button>
+          <button type="button" class="secondary" data-view="ongoing">Ongoing events / 进行中事件</button>
         </div>
       </form>
     </section>
@@ -184,6 +185,7 @@
           <p>Review event status and follow up through ongoing events. / 通过进行中事件完成跟进。</p>
         </div>
         <div>
+          <button type="button" class="primary manager-add-record" data-record-type="abnormality">Add event / 添加事件记录</button>
           <button class="secondary copy" data-copy="tracker-table">Copy table</button>
           <button class="primary refresh" data-type="tracker" data-target="#tracker-table">Refresh</button>
         </div>
@@ -201,7 +203,7 @@
       <div class="view-head">
         <div class="section-title">
           <span>02 / ONGOING · 进行中</span>
-          <h1>Ongoing abnormalities / 进行中异常</h1>
+          <h1>Ongoing events / 进行中事件</h1>
           <p>Records not yet marked resolved. / 尚未标记为已解决的异常记录。</p>
         </div>
         <div>
@@ -223,65 +225,10 @@
       <tbody id="cost-guide-body"></tbody></table>
     </dialog>
 
-    <section id="manager" class="view">
-      <button class="back" data-view="home">← Back to overview</button>
-      <div class="section-title">
-        <span>MANAGER ONLY</span>
-        <h1>Manager workspace</h1>
-        <p>Dashboards, exception analysis, and form configuration are not visible in operator mode.</p>
-      </div>
-      <div id="manager-login" class="form-card compact">
-        <h2>Unlock manager view</h2>
-        <p>Use the manager PIN. This access expires automatically.</p>
-        <form id="manager-form" class="inline">
-          <input name="pin" type="password" autocomplete="current-password" placeholder="Manager PIN" required>
-          <button class="primary">Unlock workspace</button>
-        </form>
-      </div>
-      <div id="manager-content" hidden>
-        <div class="manager-toolbar">
-          <span>Manager session active</span>
-          <div class="manager-actions">
-            <button id="run-manual-backup" class="secondary">Create manual backup / 创建手动备份</button>
-            <button id="manager-logout" class="secondary">Sign out / 退出</button>
-          </div>
-        </div>
-        <p id="backup-status" class="manager-backup-status" aria-live="polite"></p>
-        <div class="manager-overview">
-          <span>MANAGEMENT OVERVIEW / 管理概览</span>
-          <h2>Monitor operations, review exceptions, and control form options.</h2>
-          <p>Operational records remain separate from manager-only analysis and configuration.</p>
-        </div>
-        <div class="dashboard-grid">
-          <article><span>Today’s production records</span><strong id="metric-records">—</strong></article>
-          <article><span>Today’s qualified yield</span><strong id="metric-yield">—</strong></article>
-          <article><span>Open abnormalities</span><strong id="metric-events">—</strong></article>
-          <article><span>Open-event downtime</span><strong id="metric-downtime">—</strong></article>
-        </div>
+    <dialog id="manager-fields-dialog">
+      <div class="dialog-head"><h2>Edit fields and options / 编辑字段与选项</h2><button id="close-manager-fields" class="secondary" type="button">Close / 关闭</button></div>
+      <div id="manager-content">
         <div class="manager-grid">
-          <article class="form-card">
-            <h2>Analysis and exceptions</h2>
-            <p>Current rules check yield, output variance, severity, downtime, and incomplete reports. Future AI summaries remain manager-only and read-only.</p>
-            <button id="load-analysis" class="primary">Refresh exception analysis</button>
-            <div id="analysis-table"></div>
-          </article>
-          <article class="form-card">
-            <h2>Cost-failure types / 成本失效类型</h2>
-            <p>Add, change, or deactivate checkbox choices and their guide definitions. / 添加、修改或停用复选框选项及其说明。</p>
-            <form id="cost-type-form" class="form-grid">
-              <label>Type code / 类型代码<input name="type_code" placeholder="material_loss" required></label>
-              <label>Display name / 显示名称<input name="display_name" placeholder="Material loss / 材料损失" required></label>
-              <label class="wide">Definition / 定义<textarea name="definition" placeholder="Explain this cost category / 说明此成本类别" required></textarea></label>
-              <div class="wide form-actions"><button class="primary">Save cost type / 保存成本类型</button></div>
-            </form>
-            <div id="manager-cost-types"></div>
-          </article>
-          <article class="form-card manager-record-editor">
-            <h2>Correct operational record / 修正业务记录</h2>
-            <p>Managers can load a record by ID, correct it, and save an auditable revision. The original record date remains unchanged. / 管理员可按记录编号加载、修正并保存；原始记录日期保持不变。</p>
-            <form id="manager-record-load" class="inline"><label>Record type / 记录类型<select name="record_type"><option value="production">Production / 生产</option><option value="abnormality">Event / 事件</option></select></label><label>Saved record / 已保存记录<select name="record_id" id="manager-record-select" required><option value="">Select a record / 选择记录</option></select></label><button class="secondary">Load record / 加载记录</button></form>
-            <form id="manager-record-edit" class="form-grid" hidden><div id="manager-record-edit-fields" class="wide dynamic-fields"></div><div class="wide form-actions"><button class="primary">Save correction / 保存修正</button><span id="manager-record-edit-status"></span></div></form>
-          </article>
           <article class="form-card manager-fields-panel">
             <h2>Configure operator fields and options / 配置员工字段与选项</h2>
             <p>Edit the labels and guidance for the built-in Production and Event Tracker fields, manage Event type choices, or add an optional extra field when genuinely needed. / 可编辑生产和事件追踪内置字段的名称与说明，维护事件类型选项，或在确有需要时添加额外字段。</p>
@@ -326,7 +273,11 @@
           </article>
         </div>
       </div>
-    </section>
+    </dialog>
+    <dialog id="manager-record-dialog">
+      <div class="dialog-head"><h2 id="manager-record-dialog-title">Edit record / 编辑记录</h2><button id="close-manager-record-dialog" class="secondary" type="button">Close / 关闭</button></div>
+      <form id="manager-record-edit" class="form-grid"><div id="manager-record-edit-fields" class="wide dynamic-fields"></div><div class="wide form-actions"><button class="primary">Save record / 保存记录</button><span id="manager-record-edit-status" aria-live="polite"></span></div></form>
+    </dialog>
   </main>
   <script src="/static/app.js"></script>
 </body>

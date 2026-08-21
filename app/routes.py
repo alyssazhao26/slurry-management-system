@@ -175,7 +175,6 @@ def standard_form_definition(form_key):
         return jsonify(error=str(exc)), 404
 
 @web.get("/api/manager/forms/<form_key>/fields")
-@require_manager
 def manager_form_definitions(form_key):
     if form_key not in {"production", "abnormality"}:
         return jsonify(error="Unknown form"), 404
@@ -183,7 +182,6 @@ def manager_form_definitions(form_key):
 
 
 @web.get("/api/manager/forms/<form_key>/standard-fields")
-@require_manager
 def manager_standard_form_fields(form_key):
     try:
         return jsonify(fields=get_standard_field_settings(form_key))
@@ -239,7 +237,6 @@ def remove_cost_type(type_code):
         return jsonify(error=str(exc)), 400
 
 @web.post("/api/manager/event-types")
-@require_manager
 def save_event_type_option():
     try:
         save_event_type(request.get_json() or {})
@@ -248,7 +245,6 @@ def save_event_type_option():
         return jsonify(error=str(exc)), 400
 
 @web.delete("/api/manager/event-types/<path:event_value>")
-@require_manager
 def remove_event_type(event_value):
     try:
         deactivate_event_type(event_value)
@@ -257,7 +253,6 @@ def remove_event_type(event_value):
         return jsonify(error=str(exc)), 400
 
 @web.post("/api/manager/forms/<form_key>/fields")
-@require_manager
 def configure_field(form_key):
     try:
         save_field_definition(form_key, request.get_json() or {})
@@ -267,7 +262,6 @@ def configure_field(form_key):
 
 
 @web.post("/api/manager/forms/<form_key>/standard-fields")
-@require_manager
 def configure_standard_field(form_key):
     try:
         save_standard_field_setting(form_key, request.get_json() or {})
@@ -292,7 +286,6 @@ def manager_backup():
 
 
 @web.get("/api/manager/records/<record_type>/<int:record_id>")
-@require_manager
 def manager_record(record_type, record_id):
     try:
         return jsonify(record=manager_get_record(record_type, record_id))
@@ -301,7 +294,6 @@ def manager_record(record_type, record_id):
 
 
 @web.patch("/api/manager/records/<record_type>/<int:record_id>")
-@require_manager
 def manager_record_update(record_type, record_id):
     try:
         return jsonify(ok=True, record=manager_update_record(record_type, record_id, request.get_json() or {}))
