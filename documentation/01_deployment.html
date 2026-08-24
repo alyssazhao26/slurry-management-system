@@ -1,95 +1,229 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Deployment guide: one always-on factory server | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<title>Complete production deployment and validation | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
 <body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
-<main><article class="doc"><h1>Deployment guide: one always-on factory server</h1>
-<h2>Target setup</h2>
-<p>Install both MySQL and the web application on one dedicated factory server. The server needs a stable network connection, a fixed/reserved local IP address, full-disk encryption, and automatic restart after a power interruption.</p>
-<pre><code>Employee browsers -- HTTPS --&gt; Factory server
-                                |- HTTPS reverse proxy
-                                |- GNEM web application (Waitress, local only)
-                                `- MySQL Community Server (local only)
+<main><article class="doc">
+<h1>Complete production deployment and validation</h1>
+<p><strong>Purpose:</strong> This is the authoritative start-to-finish runbook for a new GNEM production installation. Complete it in order and do not begin live entry until every acceptance check passes. Replace every placeholder before running a command.</p>
 
-Manager computer -- HTTPS --&gt; Factory server
-Power BI / future AI -- read-only MySQL connection --&gt; Factory server</code></pre>
-<p>The employee web application, MySQL, and the factory server must remain running for immediate entry and saving. The manager computer does not need to remain on.</p>
-<h2>Before installation</h2>
-<ul>
-<li>[ ] Obtain a dedicated Windows computer approved by IT.</li>
-<li>[ ] Reserve a fixed LAN IP address and the approved local DNS name <code>slurry-management.local</code>.</li>
-<li>[ ] Enable BitLocker/full-disk encryption and automatic screen locking.</li>
-<li>[ ] Install current Windows security updates and endpoint protection.</li>
-<li>[ ] Install MySQL Community Server, Python, and an HTTPS reverse proxy approved by IT.</li>
-<li>[ ] Create an encrypted backup destination separate from the server.</li>
-<li>[ ] Do not use a personal Desktop, OneDrive folder, or shared drive as the live application or MySQL data location.</li>
-</ul>
-<h2>Copy the software</h2>
-<ul>
-<li>Copy the reviewed runtime release files to <code>C:\SlurryManagement</code> on the factory server. A versioned GitHub Release ZIP is recommended; Git itself is not required on the server.</li>
-<li>Do not copy an existing <code>.env</code> file containing passwords. On the server, make a new <code>.env</code> by copying <code>.env.example</code>.</li>
-<li>Open <code>.env</code> in a local text editor. It must not be committed to Git or copied to employee devices.</li>
-</ul>
-<p>Example production settings:</p>
+<h2>1. Supported production design</h2>
+<pre><code>Employee/manager browsers -- HTTPS 443 --&gt; dedicated always-on factory server
+                                                |- Caddy HTTPS gateway
+                                                |- GNEM on 127.0.0.1:5000
+                                                `- MySQL on the server SSD
+
+Power BI computer -------- read-only MySQL 3306 --^ (only its reserved IP)</code></pre>
+<p>GNEM, Caddy, MySQL, and the factory server must run for employee entry. Power BI may be off without interrupting GNEM. Do not put production SQL on the Power BI workstation. The current browser does not queue unsaved records while the server is offline.</p>
+
+<h2>2. Record approved deployment values</h2>
+<table><thead><tr><th>Item</th><th>Example</th><th>Production value</th></tr></thead><tbody>
+<tr><td>Server name</td><td><code>GNEM-SERVER</code></td><td>________________</td></tr>
+<tr><td>Reserved server IPv4</td><td><code>192.168.1.20</code></td><td>________________</td></tr>
+<tr><td>Factory subnet/CIDR</td><td><code>192.168.1.0/24</code></td><td>________________</td></tr>
+<tr><td>Application DNS name</td><td><code>slurry-management.local</code></td><td>________________</td></tr>
+<tr><td>Reserved Power BI IPv4</td><td><code>192.168.1.30</code></td><td>________________</td></tr>
+<tr><td>Service account</td><td><code>GNEM-SERVER\GNEMService</code></td><td>________________</td></tr>
+<tr><td>Encrypted off-server backup</td><td><code>\\BACKUP01\GNEM$</code></td><td>________________</td></tr>
+</tbody></table>
+<p>Keep the release version, installer, IPs, certificate thumbprint, backup destination, and test results in a restricted deployment record. Keep passwords only in the approved password vault.</p>
+
+<h2>3. Prepare Windows and the network</h2>
+<ol>
+<li>Use a dedicated, IT-approved Windows Pro/Server computer with wired Ethernet, SSD, cooling, and UPS. Do not use an employee workstation.</li>
+<li>Enable BitLocker, endpoint protection, automatic screen locking, and current security updates.</li>
+<li>In BIOS/UEFI enable power restoration after AC loss. In Windows disable sleep and hibernation while plugged in.</li>
+<li>Reserve the server and Power BI IPs in DHCP. Create internal DNS for <code>slurry-management.local</code>. A small pilot may instead add <code>SERVER_IP slurry-management.local</code> to each approved device's administrator-controlled hosts file.</li>
+<li>Create a standard Windows account such as <code>GNEMService</code>. Give it access only to the application and backup locations; do not use an employee account.</li>
+<li>Install supported 64-bit Python 3, MySQL Server 8, MySQL Workbench, and Caddy for Windows. Set the MySQL Windows service Startup type to <strong>Automatic</strong>.</li>
+<li>Confirm the factory network profile is Domain or Private.</li>
+</ol>
+
+<h2>4. Copy a clean release</h2>
+<ol>
+<li>Deploy only a reviewed versioned release that passed <code>python scripts\verify_release.py</code> and the project tests.</li>
+<li>Extract it to <code>C:\SlurryManagement</code>. Never run production from Desktop, Downloads, OneDrive, USB, or a network share.</li>
+<li>Do not transfer development <code>.env</code>, <code>.venv</code>, logs, database files, backups, test data, or Caddy private data.</li>
+<li>Obtain Caddy from its official distribution channel and verify it per IT policy, but keep it in a temporary staging location until after the clean-release check in the next section.</li>
+</ol>
+<pre><code>C:\SlurryManagement\main.py
+C:\SlurryManagement\requirements.txt
+C:\SlurryManagement\migrations\001_initial_schema.sql
+C:\SlurryManagement\deployment\caddy\Caddyfile</code></pre>
+
+<h2>5. Install Python dependencies</h2>
+<p>Sign in as the service account and run:</p>
+<pre><code>cd C:\SlurryManagement
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe scripts\verify_release.py</code></pre>
+<p>The verification must pass. Do not bypass a missing/forbidden-file result. After it passes, copy the verified Caddy executable from staging to <code>C:\SlurryManagement\deployment\caddy\caddy.exe</code>. The release checker intentionally rejects bundled executables and private runtime certificate files, so run it on the clean release before adding Caddy.</p>
+
+<h2>6. Create private production configuration</h2>
+<p>Generate separate long random values for every secret. Copy <code>deployment\environments\.env.production.example</code> to <code>C:\SlurryManagement\.env</code> and set:</p>
 <pre><code>ENVIRONMENT=production
 DEPLOYMENT_MODE=single_server
-SECRET_KEY=long-random-private-value
+SECRET_KEY=LONG_UNIQUE_RANDOM_SECRET
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=slurry_management
 DB_USER=slurry_web_app
-DB_PASSWORD=unique-private-password
+DB_PASSWORD=LONG_UNIQUE_WEB_PASSWORD
+DB_BACKUP_USER=slurry_backup
+DB_BACKUP_PASSWORD=LONG_UNIQUE_BACKUP_PASSWORD
+MYSQLDUMP_PATH=C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe
+BACKUP_DIRECTORY=C:\GNEM_Backups
+BACKUP_RETENTION_DAYS=30
 WEB_HOST=127.0.0.1
 WEB_PORT=5000
-ALLOWED_HOSTS=localhost,127.0.0.1,FACTORY_SERVER_IP,slurry-management.local
+ALLOWED_HOSTS=localhost,127.0.0.1,ACTUAL_SERVER_IP,slurry-management.local
 BEHIND_TLS_PROXY=true
-MANAGER_PIN=long-unique-manager-pin
-LOW_YIELD_THRESHOLD=0.90</code></pre>
-<p>Replace the IP address with the factory server&#x27;s actual reserved address. <code>WEB_HOST=127.0.0.1</code> is intentional: only the local HTTPS gateway can contact the web app.</p>
-<h2>Create MySQL and least-privilege accounts</h2>
-<p>Log in to MySQL with an administrator account on the factory server. Replace the passwords below with long unique values.</p>
-<pre><code>CREATE DATABASE slurry_management CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+MANAGER_PIN=LONG_UNIQUE_PRIVATE_MANAGER_PIN
+LOW_YIELD_THRESHOLD=0.90
+DB_POOL_SIZE=12
+AI_ENABLED=false</code></pre>
+<p>The two localhost settings are intentional. Restrict <code>.env</code> to Administrators, SYSTEM, and the service account; confirm it is ignored by Git.</p>
 
-CREATE USER &#x27;slurry_web_app&#x27;@&#x27;localhost&#x27; IDENTIFIED BY &#x27;WEB_APP_PASSWORD&#x27;;
-GRANT SELECT, INSERT, UPDATE ON slurry_management.* TO &#x27;slurry_web_app&#x27;@&#x27;localhost&#x27;;
-GRANT SELECT, INSERT, UPDATE ON system_import.* TO &#x27;slurry_web_app&#x27;@&#x27;localhost&#x27;;
+<h2>7. Create MySQL accounts</h2>
+<ol>
+<li>Open MySQL Workbench locally as administrator.</li>
+<li>Copy <code>deployment\sql\create_production_accounts.sql.template</code> to a private temporary location outside the repository.</li>
+<li>Replace every password placeholder and <code>POWERBI_GATEWAY_IP</code>. Do not create the optional AI account.</li>
+<li>Run it, vault the values, and securely remove the completed temporary file.</li>
+</ol>
+<table><thead><tr><th>Account</th><th>Host</th><th>Use</th><th>Maximum intended rights</th></tr></thead><tbody>
+<tr><td><code>slurry_web_app</code></td><td>localhost</td><td>GNEM</td><td>SELECT, INSERT, UPDATE on both schemas</td></tr>
+<tr><td><code>slurry_powerbi</code></td><td>Power BI IP</td><td>Reports</td><td>SELECT on <code>system_import</code> only</td></tr>
+<tr><td><code>slurry_backup</code></td><td>localhost</td><td>Backups</td><td>Backup/read privileges</td></tr>
+<tr><td><code>slurry_migrator</code></td><td>localhost</td><td>Installation</td><td>Temporary schema-change privileges</td></tr>
+</tbody></table>
 
-CREATE USER &#x27;slurry_powerbi&#x27;@&#x27;MANAGER_OR_GATEWAY_IP&#x27; IDENTIFIED BY &#x27;POWERBI_READ_ONLY_PASSWORD&#x27;;
-GRANT SELECT ON system_import.* TO &#x27;slurry_powerbi&#x27;@&#x27;MANAGER_OR_GATEWAY_IP&#x27;;
-FLUSH PRIVILEGES;</code></pre>
-<p>Use a temporary migration administrator account only for applying migrations. It needs database-definition rights while migrations run; do not use it to run the website.</p>
-<h2>Install and migrate</h2>
-<p>Open PowerShell as the dedicated application Windows account:</p>
+<h2>8. Apply the database baseline</h2>
+<ol>
+<li>Temporarily set the migrator username/password in <code>.env</code>.</li>
+<li>Run <code>.venv\Scripts\python.exe scripts\apply_migrations.py</code> and require success.</li>
+<li>Immediately restore the restricted <code>slurry_web_app</code> credentials.</li>
+<li>After initial tests, remove the migrator with <code>DROP USER 'slurry_migrator'@'localhost';</code>, or disable and vault it under formal change control.</li>
+</ol>
+<p>Never edit an applied migration.</p>
+
+<h2>9. Permit only Power BI to reach MySQL</h2>
+<p>Configure MySQL to listen on the reserved server LAN IP in addition to local access; prefer the explicit IP over <code>0.0.0.0</code>. Restart MySQL and verify GNEM still connects locally. Use MySQL TLS and certificate validation if required by IT. Install the Oracle MySQL connector required by the installed Power BI version.</p>
+<p>Power BI is the only supported remote SQL client. Never expose 3306 to the internet, employee/guest networks, or a broad subnet. For Power BI Service refresh, install Microsoft's on-premises data gateway on the approved Power BI/gateway computer.</p>
+
+<h2>10. Create narrow firewall rules</h2>
+<p>In elevated PowerShell, replace both placeholders:</p>
+<pre><code>New-NetFirewallRule -DisplayName "GNEM HTTPS - Factory LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 443 -RemoteAddress "FACTORY_SUBNET_CIDR" -Profile Domain,Private
+New-NetFirewallRule -DisplayName "GNEM MySQL - Power BI only" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3306 -RemoteAddress "POWERBI_RESERVED_IP" -Profile Domain,Private</code></pre>
+<p>Do not create an inbound rule for 5000. Review pre-existing broad MySQL, Python, Waitress, or Caddy allow rules and remove them only after confirming with IT that another application does not require them. Never port-forward 443, 5000, 3306, RDP, or Caddy administration from the internet.</p>
+
+<h2>11. Start HTTPS and distribute its public root</h2>
+<p>Confirm <code>deployment\caddy\Caddyfile</code> contains:</p>
+<pre><code>https://slurry-management.local {
+    tls internal
+    reverse_proxy 127.0.0.1:5000
+}</code></pre>
+<p>From the service account run:</p>
 <pre><code>cd C:\SlurryManagement
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt</code></pre>
-<p>Temporarily place the migration administrator credentials in <code>.env</code>, then run:</p>
-<pre><code>.venv\Scripts\python scripts\apply_migrations.py</code></pre>
-<p>After migration, restore <code>DB_USER</code> and <code>DB_PASSWORD</code> in <code>.env</code> to the restricted <code>slurry_web_app@localhost</code> account. Start a manual test:</p>
-<pre><code>.venv\Scripts\python main.py</code></pre>
-<p>Confirm locally that <code>http://127.0.0.1:5000</code> responds. Do not make port 5000 publicly reachable.</p>
-<h2>HTTPS, certificate, and firewall</h2>
+PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restart_factory_server.ps1
+Get-NetTCPConnection -State Listen -LocalPort 443,5000,3306 | Select-Object LocalAddress,LocalPort,OwningProcess</code></pre>
+<p>Port 5000 must bind only to <code>127.0.0.1</code>; 443 belongs to Caddy; 3306 is local plus the approved server LAN address only if Power BI is enabled.</p>
+<p>Caddy normally stores its internal CA under the profile of the account running it at <code>%APPDATA%\Caddy\pki\authorities\local\root.crt</code>. While signed in as the service account, copy only that public file to <code>deployment\caddy\GNEM-Factory-Root-CA.crt</code>. Never copy <code>root.key</code>.</p>
+<pre><code>$gnemRoot = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("C:\SlurryManagement\deployment\caddy\GNEM-Factory-Root-CA.crt")
+$gnemRoot | Format-List Subject,Issuer,Thumbprint,NotBefore,NotAfter</code></pre>
+<p>Record the thumbprint. Install the public root into <strong>Local Computer / Trusted Root Certification Authorities</strong> on approved devices, preferably through Group Policy. Restart browsers. Never bypass a certificate warning.</p>
+
+<h2>12. Safely delete an existing old GNEM certificate</h2>
+<p><strong>Only remove a known old GNEM/Caddy root during approved replacement or retirement.</strong> Do not bulk-delete by name. Deleting a root breaks trust for everything it signed.</p>
+<ol>
+<li>Obtain the old public root file and its approved recorded thumbprint. If neither can reliably identify it, stop and ask IT.</li>
+<li>In elevated PowerShell, inspect it:</li>
+</ol>
+<pre><code>$oldRoot = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("C:\ApprovedTemporaryPath\OLD-GNEM-Root.crt")
+$oldRoot | Format-List Subject,Issuer,Thumbprint,NotBefore,NotAfter
+$oldThumbprint = $oldRoot.Thumbprint
+Get-ChildItem Cert:\LocalMachine\Root,Cert:\CurrentUser\Root |
+    Where-Object Thumbprint -eq $oldThumbprint |
+    Format-List PSParentPath,Subject,Issuer,Thumbprint,NotAfter</code></pre>
+<ol start="3">
+<li>Confirm Subject, Issuer, and thumbprint match the deployment record. Keep a restricted recovery copy.</li>
+<li>If zero or unexpected multiple certificates appear, stop. Otherwise remove only the exact path(s):</li>
+</ol>
+<pre><code>Remove-Item -LiteralPath "Cert:\LocalMachine\Root\EXACT_OLD_THUMBPRINT"
+# Only if the verified old root was also found in CurrentUser:
+Remove-Item -LiteralPath "Cert:\CurrentUser\Root\EXACT_OLD_THUMBPRINT"</code></pre>
+<ol start="5">
+<li>Repeat the lookup to confirm absence. If replacing it, install the new verified root, restart the browser, and test HTTPS.</li>
+<li>If Group Policy/device management installed the old root, remove it from that central policy first or it will return.</li>
+</ol>
+<p>Never use <code>certutil -delstore Root</code> without an exact thumbprint.</p>
+
+<h3>Approved full Caddy CA rotation</h3>
+<p>Normal renewal needs no deletion. Caddy renews leaf certificates automatically. For an explicitly approved full rotation:</p>
+<ol>
+<li>Schedule downtime, verify a current database backup, and plan distribution of the new root.</li>
+<li>Stop Caddy. Sign in as the same service account and resolve its actual <code>%APPDATA%\Caddy</code> path.</li>
+<li>Copy that entire resolved Caddy directory to a restricted recovery location and verify the copy.</li>
+<li>Remove only its verified <code>pki\authorities\local</code> directory and matching <code>certificates\local\slurry-management.local</code> directory. Never delete <code>%APPDATA%</code>, a whole profile, or an unverified computed path.</li>
+<li>Restart Caddy, export the new public <code>root.crt</code>, record its thumbprint, distribute it, and validate HTTPS everywhere.</li>
+<li>Only then remove the old root from clients using the exact-thumbprint procedure.</li>
+</ol>
+<p>Never copy the CA private key to clients or the repository.</p>
+
+<h2>13. Install complete automatic startup</h2>
+<p>MySQL must be an Automatic Windows service. The included installer schedules both GNEM and Caddy. In elevated PowerShell:</p>
+<pre><code>cd C:\SlurryManagement
+PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_autostart_task.ps1 -TaskUser "GNEM-SERVER\GNEMService"</code></pre>
+<p>Enter the password at the Windows prompt. Confirm Task Scheduler shows <code>GNEM Slurry Tracker</code> enabled and, after testing, result <code>0x0</code>. After validating backup credentials and destination, install maintenance:</p>
+<pre><code>PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_maintenance_tasks.ps1 -TaskUser "GNEM-SERVER\GNEMService"</code></pre>
+
+<h2>14. Back up and prove restoration</h2>
+<ol>
+<li>Create <code>C:\GNEM_Backups</code> with access limited to Administrators, SYSTEM, and the service account.</li>
+<li>Configure an encrypted off-server copy. A backup on the production SSD alone is insufficient.</li>
+<li>Run <code>scripts\backup_factory_database.ps1</code>; require a non-empty timestamped SQL file and no logged error.</li>
+<li>Copy it off-server and restore into a separate non-production MySQL instance. Verify both schemas. Never test restore over production.</li>
+<li>Record filename, tester, date, result, recovery time, and off-server location.</li>
+</ol>
+
+<h2>15. Power BI and permission validation</h2>
+<ol>
+<li>Connect from the reserved Power BI computer using only <code>slurry_powerbi</code> and import approved <code>system_import</code> tables.</li>
+<li>Confirm SELECT succeeds. Confirm INSERT, UPDATE, DELETE, schema changes, and protected <code>slurry_management</code> access are denied using permission inspection or a harmless test object—not destructive statements against real data.</li>
+<li>Turn Power BI off temporarily and confirm employee entry continues. Turn it on and verify refresh.</li>
+</ol>
+
+<h2>16. Reboot and mandatory acceptance test</h2>
+<p>Reboot the server. Do not sign in or press a launcher. After startup, test from a second approved computer:</p>
 <ul>
-<li>The deployed gateway is Caddy. Its configuration is <code>deployment\caddy\Caddyfile</code>; it listens on HTTPS <code>443</code> and forwards only to <code>127.0.0.1:5000</code>.</li>
-<li>Caddy creates an internal factory certificate for <code>slurry-management.local</code>. Read <a href="09_https_certificate_setup.html">09 HTTPS certificate setup</a> before connecting another computer.</li>
-<li>Windows Firewall rule <code>GNEM HTTPS - Factory LAN</code> permits inbound TCP 443 only on Private/Domain factory networks.</li>
-<li>Do not allow employee computers to reach TCP 3306. Allow it only from the explicitly approved Power BI gateway/manager IP if remote Power BI direct-query is required.</li>
-<li>Do not open port 5000 in Windows Firewall and do not port-forward 443 or 3306 from the internet router.</li>
+<li>[ ] DNS resolves the approved name to the reserved IP.</li>
+<li>[ ] <code>https://slurry-management.local</code> opens without warning.</li>
+<li>[ ] 443 is reachable from the factory subnet; 5000 is not remotely reachable.</li>
+<li>[ ] 3306 is reachable from the reserved Power BI computer only.</li>
+<li>[ ] MySQL, GNEM, Caddy, startup task, and backup task are healthy.</li>
+<li>[ ] Operator submits labeled test production and abnormality records and sees them.</li>
+<li>[ ] Operator can change only permitted open-tracker fields and cannot access manager analysis.</li>
+<li>[ ] Public display works without exposing manager-only details.</li>
+<li>[ ] Manager PIN unlocks; sign-out removes access.</li>
+<li>[ ] Test rows exist in the correct <code>system_import</code> tables.</li>
+<li>[ ] Power BI reads but cannot write or access protected data.</li>
+<li>[ ] Backup and off-server copy succeed; non-production restore has passed.</li>
+<li>[ ] A controlled UPS/power-restoration test powers the server on and restores HTTPS without manual action.</li>
 </ul>
-<h2>Start automatically</h2>
-<ul>
-<li>Configure MySQL as a Windows service with automatic startup.</li>
-<li>Run the Python web application under a dedicated non-administrator Windows account as a Windows service or Scheduled Task triggered at startup.</li>
-<li>Start both services with <code>Start_GNEM_Slurry_Tracker.cmd</code>. For manual recovery, use <code>scripts\restart_factory_server.ps1</code>; it starts the local web service and Caddy HTTPS gateway.</li>
-<li>Configure Windows to restart automatically after a power failure where IT policy allows it; use a UPS.</li>
-</ul>
-<h2>Acceptance checklist</h2>
-<ul>
-<li>[ ] <code>https://slurry-management.local</code> works from an employee computer without a browser certificate warning.</li>
-<li>[ ] Operator can submit a test production record and see it in Production records.</li>
-<li>[ ] Operator can submit a test abnormality and update its open tracker owner/date.</li>
-<li>[ ] Operator cannot open analysis or manager dashboard data.</li>
-<li>[ ] Manager PIN opens the manager workspace and sign-out closes it.</li>
-<li>[ ] Power BI read-only user can view <code>system_import</code> tables but cannot insert/update/delete.</li>
-<li>[ ] MySQL cannot be reached from an employee workstation.</li>
-<li>[ ] A backup completed and one restore test was recorded.</li>
-</ul></article><p class="footer">Generated from 01_deployment.md. Update the Markdown source and run <code>python scripts/build_docs.py</code>.</p></main></body></html>
+<p>Do not go live with an unresolved check. Remove/exclude test records according to approved data policy.</p>
+
+<h2>17. Safe remote maintenance</h2>
+<p>Use company VPN followed by IT-approved remote administration. Never expose RDP, MySQL, or GNEM publicly.</p>
+<ol>
+<li>Test changes away from production and produce a reviewed versioned release.</li>
+<li>Record the maintenance window/version and verify a pre-update backup.</li>
+<li>Replace runtime files while preserving <code>.env</code>, <code>.venv</code>, logs, backups, Caddy data/private keys, and MySQL data.</li>
+<li>Install dependencies only if requirements changed. Apply only new numbered migrations using a temporary migrator.</li>
+<li>Run <code>Restart_GNEM_Slurry_Tracker.cmd</code>, then repeat HTTPS, entry, permission, and backup smoke tests.</li>
+<li>Record the result and keep the prior release plus verified backup for rollback.</li>
+</ol>
+
+<h2>18. Go-live sign-off</h2>
+<p>Go live only when the restricted deployment record contains all network values, release version, certificate thumbprint, permission-test results, reboot/power-recovery result, verified off-server backup and restore, and approval from the responsible IT and operational owners.</p>
+</article><p class="footer">Authoritative GNEM production deployment runbook. Review whenever server, network, database, certificate, startup, backup, or release procedures change.</p>
+</main></body></html>
