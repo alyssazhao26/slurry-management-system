@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Multi-department deployment and configuration | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
+<main><article class="doc"><h1>Multi-department deployment and configuration</h1>
+
+<h2>Decision</h2>
+<p>Use one shared application codebase and one protected <code>main</code> branch for the common page structure, security controls, reusable display blocks, APIs, migration framework, and release tooling. Each department receives its own environment configuration and database. Department-specific text, fields, calculations, report columns, display choices, and operational records must not be implemented as permanent department branches when they can be represented as configuration or data.</p>
+
+<h2>What “shared structure” means</h2>
+<table><thead><tr><th>Shared application layer</th><th>Department-owned layer</th></tr></thead><tbody>
+<tr><td>Navigation, page shells, cards/blocks, dialogs, authentication, audit behavior, API patterns, backup/recovery, and migration runner</td><td>Block titles and content, which blocks are visible, their order and size, field labels/help text/options, event types, report column selections, thresholds, formulas, calculations, and records</td></tr>
+<tr><td>Schema capabilities and backward-compatible migration definitions</td><td>Separate database instance/schema populated with that department’s settings and records</td></tr>
+<tr><td>Versioned releases and common automated tests</td><td>Department acceptance tests and an approved configuration export/reference</td></tr>
+</tbody></table>
+
+<h2>Recommended topology</h2>
+<pre><code>GitHub main branch + tagged release
+             |
+             +-- Computer A -- Department A .env -- Department A database
+             |                                      `-- A text, fields, formulas, display, records
+             |
+             `-- Computer B -- Department B .env -- Department B database
+                                                    `-- B text, fields, formulas, display, records</code></pre>
+<p>Deploy the same reviewed Git tag to both computers. A release can add a new configurable block type or calculation engine without forcing both departments to use identical content or formulas.</p>
+
+<h2>Branch policy</h2>
+<ul>
+<li>Keep <code>main</code> as the deployable shared product.</li>
+<li>Use short-lived branches named for work, such as <code>feature/configurable-calculations</code> or <code>fix/report-column-order</code>, then merge them through review.</li>
+<li>Do not rename <code>main</code> to a department name and do not create permanent <code>department-a</code>/<code>department-b</code> branches merely for different text, data, fields, calculations, or display settings.</li>
+<li>A department-specific branch is justified only when that department requires code that cannot safely become a reusable module or configuration capability—for example, a legally required integration exclusive to one site. Record that exception in an architecture decision, assign an owner, and define how shared security fixes will be merged into it.</li>
+</ul>
+
+<h2>Configuration model to implement</h2>
+<p>The current system already stores display blocks, permanent text, field settings, and event choices in the database. Extend the same model rather than adding hard-coded department conditions:</p>
+<ul>
+<li><strong>Department profile:</strong> department code, display name, language, branding text, timezone, and enabled modules.</li>
+<li><strong>Block configuration:</strong> block type, title, content, visibility, order, width, height, and role visibility.</li>
+<li><strong>Field configuration:</strong> stable field key, label, help text, input type, options, required status, validation rule, and report availability.</li>
+<li><strong>Calculation configuration:</strong> stable calculation key, version, input field keys, expression or approved strategy name, rounding/unit rules, effective date, and active status.</li>
+<li><strong>Report configuration:</strong> named templates with selected columns, column order, labels, filters, and department ownership.</li>
+</ul>
+<p>Calculation definitions need versioning. Historical records should retain either calculated outputs or the calculation-version identifier so a later formula change does not silently rewrite the meaning of old reports.</p>
+
+<h2>Database and migration rules</h2>
+<ul>
+<li>Computer A and Computer B use separate database credentials and databases; never point both departments at one operational schema unless a reviewed multi-tenant design is implemented.</li>
+<li>Run the same numbered schema migrations on every department database before deploying the matching application tag.</li>
+<li>Keep secrets and machine-specific values in each computer’s private <code>.env</code>; never commit them.</li>
+<li>Store editable department configuration in the database. If configuration needs to be promoted or recovered, export it as a sanitized, versioned configuration artifact that contains no operational records or secrets.</li>
+<li>Back up and restore-test each department database independently.</li>
+</ul>
+
+<h2>Release and traceability checklist</h2>
+<ul>
+<li>[ ] Changelog identifies user-visible changes, configuration impact, migrations, and test results.</li>
+<li>[ ] Architecture documentation is updated when ownership or data flow changes.</li>
+<li>[ ] Automated tests pass for the shared application.</li>
+<li>[ ] Department A and Department B acceptance matrices cover their enabled blocks, fields, calculations, and reports.</li>
+<li>[ ] The exact accepted commit is tagged using Semantic Versioning.</li>
+<li>[ ] Each deployment record contains department, computer/server, deployed tag, database migration level, configuration version, backup reference, operator, date/time, smoke-test result, and rollback outcome.</li>
+</ul>
+
+<h2>Immediate recommendation</h2>
+<p>Retain the current <code>main</code> name. First make calculations and named report layouts configurable, then deploy the same tagged application to each department with independent databases. This preserves one maintainable product while allowing the contents and behavior of its large blocks to differ by department.</p>
+</article><p class="footer">Editable HTML architecture and deployment decision. Update this document whenever the department configuration boundary changes.</p></main></body></html>

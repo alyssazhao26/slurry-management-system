@@ -200,6 +200,11 @@ def update_production_qualification(record_id, payload, actor_id=None):
 
 def create_abnormality(payload, actor_id=None):
     payload = {**payload, "event_date": date.today().isoformat()}
+    description = str(payload.get("description", "")).strip()
+    immediate_action = str(payload.get("immediate_action", "")).strip()
+    if not description:
+        raise ValueError("Describe what happened.")
+    payload["description"], payload["immediate_action"] = description, immediate_action
     time_pattern = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
     if not time_pattern.fullmatch(str(payload.get("start_time", ""))) or not time_pattern.fullmatch(str(payload.get("end_time", ""))):
         raise ValueError("Event time must use valid 24-hour values (HH:MM - HH:MM).")
@@ -218,6 +223,8 @@ def create_abnormality(payload, actor_id=None):
         target_finish_date = date.today().isoformat()
     if is_resolved == "no" and (not responsible_person or not target_finish_date):
         raise ValueError("Unresolved events require a responsible person and expected finish date.")
+    if is_resolved == "no" and not immediate_action:
+        raise ValueError("Unresolved events require an immediate action.")
     if effective_time_cost not in {None, "yes", "no"}:
         raise ValueError("Effective time cost must be yes or no.")
     if machine_type not in {"semi", "auto"}:
@@ -304,9 +311,9 @@ def list_records(record_type, manager=False, page=1, page_size=50, record_date=N
             FROM system_import.abnormality_reports
         """,
         "tracker": """
-            SELECT id, event_date, shift_name, machine_code, machine_type, event_type, severity,
-                   description, responsible_person, target_finish_date,
-                   solution_provided, actual_finish_date, effectiveness, state
+            SELECT id, event_date, start_time, end_time, shift_name, machine_code, machine_type, event_type, severity,
+                   description, immediate_action, responsible_person, target_finish_date,
+                   solution_provided, actual_finish_date, effectiveness, is_resolved, state
             FROM system_import.abnormality_reports
         """,
         "ongoing": """
@@ -331,7 +338,7 @@ def list_records(record_type, manager=False, page=1, page_size=50, record_date=N
     order_by = {
         "production": "created_at DESC",
         "abnormality": "created_at DESC",
-        "tracker": "state ASC, target_finish_date ASC, created_at DESC",
+        "tracker": "event_date DESC, start_time DESC, created_at DESC",
         "ongoing": "event_date DESC, start_time DESC, created_at DESC",
         "analysis": "status ASC, created_at DESC",
     }
@@ -672,6 +679,105 @@ def manager_dashboard():
 DAILY_TASK_TYPES = {"production", "cleaning", "custom"}
 DAILY_TASK_MACHINES = {*(f"J{number}" for number in range(1, 10)), *(f"J10-{number}" for number in range(1, 6))}
 
+DISPLAY_BLOCK_DEFAULTS = [
+    {"key": "task", "title": "Today's task / 今日任务", "visible": True, "order": 10, "width": 2, "height": 2, "font_size": 16},
+    {"key": "rates", "title": "Production rates / 生产率", "visible": True, "order": 20, "width": 1, "height": 1, "font_size": 16},
+    {"key": "pending_qualification", "title": "Pending qualification data / 待补录合格数据", "visible": True, "order": 25, "width": 1, "height": 1, "font_size": 16},
+    {"key": "reminders", "title": "Reminders / 提醒事项", "visible": True, "order": 30, "width": 1, "height": 1, "font_size": 16},
+    {"key": "ongoing", "title": "Ongoing issue tracker / 进行中问题追踪", "visible": True, "order": 40, "width": 2, "height": 2, "font_size": 16},
+    {"key": "events", "title": "Event details / 事件明细", "visible": True, "order": 50, "width": 3, "height": 2, "font_size": 16},
+]
+DISPLAY_EVENT_COLUMN_DEFAULTS = [
+    {"key": "event_date", "label": "Event date / 事件日期", "visible": True, "order": 10},
+    {"key": "start_time", "label": "Start time / 开始时间", "visible": True, "order": 20},
+    {"key": "end_time", "label": "End time / 结束时间", "visible": True, "order": 30},
+    {"key": "shift_name", "label": "Shift / 班次", "visible": True, "order": 40},
+    {"key": "machine_code", "label": "Machine / 设备", "visible": True, "order": 50},
+    {"key": "machine_type", "label": "Process / 工艺", "visible": True, "order": 60},
+    {"key": "event_type", "label": "Event type / 事件类型", "visible": True, "order": 70},
+    {"key": "severity", "label": "Severity / Priority / 严重程度 / 优先级", "visible": True, "order": 80},
+    {"key": "duration_minutes", "label": "Duration (minutes) / 持续时间（分钟）", "visible": True, "order": 90},
+    {"key": "is_resolved", "label": "Resolved? / 是否解决", "visible": True, "order": 100},
+    {"key": "responsible_person", "label": "Responsible person / 责任人", "visible": True, "order": 110},
+    {"key": "target_finish_date", "label": "Expected finish / 预计完成", "visible": True, "order": 120},
+    {"key": "effective_time_cost", "label": "Effective time cost? / 是否为有效时间成本", "visible": True, "order": 130},
+    {"key": "cost_failure_types", "label": "Cost-failure types / 成本失效类型", "visible": True, "order": 140},
+    {"key": "potential_cost", "label": "Potential cost / 潜在成本", "visible": True, "order": 150},
+    {"key": "description", "label": "What happened? / 发生了什么？", "visible": True, "order": 160},
+    {"key": "immediate_action", "label": "Immediate action / 立即措施", "visible": True, "order": 170},
+]
+
+DISPLAY_BRANDING_DEFAULTS = {
+    "title": "GNEM Slurry Production Details / GNEM 制浆生产明细",
+    "subtitle": "Central factory records · Local SQL",
+    "display_eyebrow": "GNEM SLURRY PRODUCTION DETAILS / GNEM 制浆生产明细",
+    "display_title": "Daily Factory Display / 每日工厂看板",
+}
+
+def default_display_settings(): return {"branding": dict(DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in DISPLAY_BLOCK_DEFAULTS], "event_columns": [dict(x) for x in DISPLAY_EVENT_COLUMN_DEFAULTS]}
+
+def get_display_settings():
+    with transaction() as cursor:
+        cursor.execute("SELECT settings_json FROM system_import.display_settings WHERE setting_key = 'factory_display'")
+        row = cursor.fetchone()
+    if not row: return default_display_settings()
+    saved = json.loads(row["settings_json"]) if isinstance(row["settings_json"], str) else row["settings_json"]
+    defaults = default_display_settings()
+    if isinstance(saved.get("branding"), dict):
+        defaults["branding"].update({key: str(saved["branding"].get(key, value)) for key, value in defaults["branding"].items()})
+    for group in ("blocks", "event_columns"):
+        saved_items = saved.get(group, [])
+        saved_by_key = {item["key"]: item for item in saved_items}
+        default_keys = {item["key"] for item in defaults[group]}
+        defaults[group] = [{**item, **saved_by_key.get(item["key"], {})} for item in defaults[group]]
+        if group == "blocks":
+            defaults[group].extend(item for item in saved_items if item.get("key") not in default_keys and item.get("type") == "static_text")
+    return defaults
+
+def save_display_settings(payload, actor_id=None):
+    defaults, cleaned = default_display_settings(), {}
+    branding = payload.get("branding", defaults["branding"])
+    if not isinstance(branding, dict): raise ValueError("Branding must be an object.")
+    cleaned_branding = {key: str(branding.get(key, fallback)).strip() for key, fallback in defaults["branding"].items()}
+    if not cleaned_branding["title"] or not cleaned_branding["display_title"] or any(len(value) > 160 for value in cleaned_branding.values()):
+        raise ValueError("Application and display titles are required and header text must be 160 characters or fewer.")
+    cleaned["branding"] = cleaned_branding
+    for group in ("blocks", "event_columns"):
+        if not isinstance(payload.get(group), list): raise ValueError(f"{group} must be a list.")
+        supplied = {str(x.get("key")): x for x in payload[group] if isinstance(x, dict)}; items = []
+        for fallback in defaults[group]:
+            item, label_key = supplied.get(fallback["key"], {}), ("title" if group == "blocks" else "label")
+            label = str(item.get(label_key, fallback[label_key])).strip()
+            if not label or len(label) > 160: raise ValueError("Display titles must contain 1 to 160 characters.")
+            try: order = max(0, min(int(item.get("order", fallback["order"])), 999))
+            except (TypeError, ValueError) as exc: raise ValueError("Display order must be a whole number.") from exc
+            result = {"key": fallback["key"], label_key: label, "visible": bool(item.get("visible", False)), "order": order}
+            if group == "blocks":
+                result["width"] = max(1, min(int(item.get("width", fallback["width"])), 3))
+                result["height"] = max(1, min(int(item.get("height", fallback.get("height", 1))), 3))
+                result["font_size"] = max(12, min(int(item.get("font_size", fallback.get("font_size", 16))), 36))
+            items.append(result)
+        if group == "blocks":
+            for item in payload["blocks"]:
+                key = str(item.get("key", ""))
+                if key in {fallback["key"] for fallback in defaults["blocks"]} or item.get("type") != "static_text":
+                    continue
+                if not re.fullmatch(r"text_[a-f0-9-]{8,40}", key):
+                    raise ValueError("Permanent text block identifier is invalid.")
+                title, content = str(item.get("title", "")).strip(), str(item.get("content", "")).strip()
+                if not title or len(title) > 160: raise ValueError("Permanent block titles must contain 1 to 160 characters.")
+                if len(content) > 4000: raise ValueError("Permanent text must be 4,000 characters or fewer.")
+                items.append({"key": key, "type": "static_text", "title": title, "content": content,
+                              "visible": bool(item.get("visible", True)), "order": max(0, min(int(item.get("order", 900)), 999)),
+                              "width": max(1, min(int(item.get("width", 3)), 3)),
+                              "height": max(1, min(int(item.get("height", 1)), 3)),
+                              "font_size": max(12, min(int(item.get("font_size", 16)), 36))})
+        cleaned[group] = items
+    with transaction() as cursor:
+        cursor.execute("INSERT INTO system_import.display_settings (setting_key, settings_json) VALUES ('factory_display', %s) ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)", (json.dumps(cleaned),))
+        _audit(cursor, actor_id, "display_settings", 0, "saved", cleaned)
+    return cleaned
+
 
 def _legacy_task_items(task):
     """Map the former one-row task format to repeatable items without losing data."""
@@ -784,9 +890,9 @@ def daily_report(record_date):
     with transaction() as cursor:
         cursor.execute(
             """
-            SELECT shift_name, machine_code, formula_code, batch_number,
+            SELECT record_date, shift_name, machine_code, formula_code, batch_number,
                    planned_quantity, actual_quantity, qualified_quantity,
-                   achievement_rate, qualified_rate
+                   achievement_rate, qualified_rate, notes, created_at
             FROM system_import.production_records
             WHERE record_date = %s
             ORDER BY shift_name, machine_code, batch_number
@@ -797,11 +903,12 @@ def daily_report(record_date):
         production = cursor.fetchall()
         cursor.execute(
             """
-            SELECT machine_type,
+            SELECT event_date, shift_name, machine_code, machine_type,
                    CONCAT(COALESCE(TIME_FORMAT(start_time, '%H:%i'), '—'), ' - ',
                           COALESCE(TIME_FORMAT(end_time, '%H:%i'), '—')) AS event_time,
-                   event_type, description, is_resolved, responsible_person,
-                   target_finish_date, actual_finish_date
+                   duration_minutes, event_type, severity, description, immediate_action,
+                   is_resolved, responsible_person, target_finish_date, actual_finish_date,
+                   solution_provided, effectiveness
             FROM system_import.abnormality_reports
             WHERE event_date = %s
             ORDER BY start_time, machine_code
@@ -847,6 +954,15 @@ def public_display_summary(record_date=None):
         production = cursor.fetchone()
         cursor.execute(
             """
+            SELECT id, record_date, formula_code, machine_code, batch_number, actual_quantity
+            FROM system_import.production_records
+            WHERE qualified_pending = TRUE
+            ORDER BY record_date, created_at, id
+            """
+        )
+        pending_qualifications = cursor.fetchall()
+        cursor.execute(
+            """
             SELECT COUNT(*) AS total, COALESCE(SUM(state = 'open'), 0) AS open_events,
                    COALESCE(SUM(is_resolved = 'yes'), 0) AS resolved_events,
                    MAX(updated_at) AS latest_event_update
@@ -875,11 +991,13 @@ def public_display_summary(record_date=None):
         event_by_machine = {row["machine_code"]: row for row in cursor.fetchall()}
         cursor.execute(
             """
-            SELECT machine_code, machine_type, event_type, severity, is_resolved, state,
-                   start_time, end_time, responsible_person, target_finish_date
+            SELECT event_date, start_time, end_time, shift_name, machine_code, machine_type,
+                   event_type, severity, duration_minutes, is_resolved, state,
+                   responsible_person, target_finish_date, effective_time_cost,
+                   cost_failure_types, potential_cost, description, immediate_action
             FROM system_import.abnormality_reports
             WHERE event_date = %s
-            ORDER BY start_time, created_at
+            ORDER BY event_date DESC, start_time DESC, created_at DESC
             LIMIT 12
             """,
             (selected_date,),
@@ -926,10 +1044,12 @@ def public_display_summary(record_date=None):
             "qualified_rate": round(qualified / actual, 4) if actual and not production["qualified_pending"] else None,
             "qualified_pending": int(production["qualified_pending"] or 0),
         },
+        "pending_qualifications": _json_safe_rows(pending_qualifications),
         "events": {"total": events["total"], "open": int(events["open_events"] or 0), "resolved": int(events["resolved_events"] or 0)},
         "machines": _json_safe_rows(machines),
         "event_tracker": _json_safe_rows(event_tracker),
         "ongoing_events": _json_safe_rows(ongoing_events),
+        "display_settings": get_display_settings(),
         "last_updated": latest.isoformat(sep=" ", timespec="seconds") if latest else None,
     }
 
@@ -945,6 +1065,27 @@ def manager_get_record(record_type, record_id):
     if not row:
         raise ValueError("Record not found.")
     return _json_safe_rows([row])[0]
+
+
+def _manager_completion_values(existing, payload):
+    """Validate completion only when this edit is actually completing the event."""
+    requested_status = str(payload.get("is_resolved", existing["is_resolved"])).lower()
+    if requested_status not in {"yes", "no"}:
+        raise ValueError("Resolved status must be yes or no.")
+
+    actual_finish_date = payload.get("actual_finish_date") or existing.get("actual_finish_date") or None
+    solution_provided = str(payload.get("solution_provided") or existing.get("solution_provided") or "").strip()
+    has_finish, has_solution = bool(actual_finish_date), bool(solution_provided)
+    if has_finish != has_solution:
+        raise ValueError("Actual finish date and solution provided must be completed together.")
+
+    was_resolved = str(existing.get("is_resolved", "no")).lower() == "yes" or existing.get("state") == "resolved"
+    if has_finish and has_solution:
+        requested_status = "yes"
+    elif requested_status == "yes" and not was_resolved:
+        raise ValueError("Closing an event requires both actual finish date and solution provided.")
+
+    return actual_finish_date, solution_provided, requested_status
 
 
 def manager_update_record(record_type, record_id, payload, actor_id=None):
@@ -969,9 +1110,9 @@ def manager_update_record(record_type, record_id, payload, actor_id=None):
             severity = str(payload.get("severity", existing["severity"])).lower()
             if severity not in {"normal", "low", "medium", "high"}:
                 raise ValueError("Choose a valid severity or priority.")
-            is_resolved = str(payload.get("is_resolved", existing["is_resolved"])).lower()
-            if is_resolved not in {"yes", "no"}:
-                raise ValueError("Resolved status must be yes or no.")
+            actual_finish_date, solution_provided, is_resolved = _manager_completion_values(existing, payload)
+            if actual_finish_date and str(actual_finish_date) < str(existing["event_date"]):
+                raise ValueError("Actual finish date cannot be earlier than the event date.")
             cursor.execute("""UPDATE system_import.abnormality_reports SET start_time=%s, end_time=%s, shift_name=%s, machine_code=%s,
                 machine_type=%s, event_type=%s, severity=%s, duration_minutes=%s, description=%s, immediate_action=%s,
                 responsible_person=%s, target_finish_date=%s, actual_finish_date=%s, solution_provided=%s,
@@ -981,7 +1122,7 @@ def manager_update_record(record_type, record_id, payload, actor_id=None):
                 payload.get("event_type", existing["event_type"]), severity, int(payload.get("duration_minutes", existing["duration_minutes"])),
                 payload.get("description", existing.get("description") or ""), payload.get("immediate_action", existing.get("immediate_action") or ""),
                 payload.get("responsible_person", existing.get("responsible_person") or ""), payload.get("target_finish_date") or None,
-                payload.get("actual_finish_date") or None, payload.get("solution_provided", existing.get("solution_provided") or ""),
+                actual_finish_date, solution_provided,
                 payload.get("effective_time_cost") or None, is_resolved, "resolved" if is_resolved == "yes" else "open", record_id))
         else:
             raise ValueError("Unknown record type.")

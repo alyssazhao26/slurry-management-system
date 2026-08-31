@@ -1,0 +1,11 @@
+ALTER TABLE production_records DROP FOREIGN KEY fk_production_user;
+ALTER TABLE production_records MODIFY created_by BIGINT NULL;
+ALTER TABLE abnormality_reports DROP FOREIGN KEY fk_abnormality_user;
+ALTER TABLE abnormality_reports MODIFY reported_by BIGINT NULL;
+ALTER TABLE audit_events DROP FOREIGN KEY fk_audit_user;
+ALTER TABLE audit_events MODIFY actor_id BIGINT NULL;
+ALTER TABLE abnormality_reports ADD COLUMN responsible_person VARCHAR(120) NULL;
+ALTER TABLE abnormality_reports ADD COLUMN target_finish_date DATE NULL;
+ALTER TABLE abnormality_reports ADD COLUMN solution_provided TEXT NULL;
+ALTER TABLE abnormality_reports ADD COLUMN actual_finish_date DATE NULL;
+ALTER TABLE abnormality_reports ADD COLUMN effectiveness ENUM('pending','effective','not_effective') NOT NULL DEFAULT 'pending';

@@ -12,6 +12,7 @@ from .services.records import (
     deactivate_event_type,
     get_cost_failure_types,
     get_event_types,
+    get_display_settings,
     get_field_definitions,
     get_standard_field_settings,
     list_records,
@@ -21,6 +22,7 @@ from .services.records import (
     public_display_summary,
     save_cost_failure_type,
     save_event_type,
+    save_display_settings,
     save_field_definition,
     save_standard_field_setting,
     save_daily_task,
@@ -209,6 +211,16 @@ def public_display_data():
         return jsonify(public_display_summary(request.args.get("date") or None))
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
+@web.get("/api/manager/display-settings")
+@require_manager
+def manager_display_settings(): return jsonify(settings=get_display_settings())
+
+@web.post("/api/manager/display-settings")
+@require_manager
+def update_manager_display_settings():
+    try: return jsonify(ok=True, settings=save_display_settings(request.get_json() or {}))
+    except ValueError as exc: return jsonify(error=str(exc)), 400
 
 @web.post("/api/daily-task")
 def save_operator_daily_task():

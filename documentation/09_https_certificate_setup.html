@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -26,14 +26,14 @@
 <h2>Set up each approved employee computer</h2>
 <ol>
 <li>Connect the computer to the factory network.</li>
-<li>Make sure <code>slurry-management.local</code> resolves to the factory server. Until IT creates internal DNS, add this line to the computer's hosts file as Administrator: <code>FACTORY_SERVER_IP slurry-management.local</code>. Replace the placeholder with the reserved server IP.</li>
+<li>Make sure <code>slurry-management.local</code> resolves to the factory server. Until IT creates internal DNS, add this line to the computer's hosts file as Administrator: <code>172.23.19.139 slurry-management.local</code>. Replace the IP only if the server IP changes.</li>
 <li>Copy <code>GNEM-Factory-Root-CA.crt</code> from the server's <code>deployment\caddy</code> folder.</li>
 <li>Open the certificate file, choose <strong>Install Certificate</strong>, select <strong>Local Machine</strong>, then store it in <strong>Trusted Root Certification Authorities</strong>. Administrator permission is required. IT can deploy it centrally with Group Policy instead.</li>
 <li>Close every browser window, open a new browser, and visit <code>https://slurry-management.local</code>. The browser must show a secure lock with no warning.</li>
 </ol>
 <h2>Server settings that must remain in place</h2>
 <pre>
-<code>WEB_HOST=127.0.0.1&#10;WEB_PORT=5000&#10;ALLOWED_HOSTS=localhost,127.0.0.1,FACTORY_SERVER_IP,slurry-management.local&#10;BEHIND_TLS_PROXY=true</code>
+<code>WEB_HOST=127.0.0.1&#10;WEB_PORT=5000&#10;ALLOWED_HOSTS=localhost,127.0.0.1,172.23.19.139,slurry-management.local&#10;BEHIND_TLS_PROXY=true</code>
 </pre>
 <p>Caddy configuration: <code>deployment\caddy\Caddyfile</code>.</p>
 <pre>

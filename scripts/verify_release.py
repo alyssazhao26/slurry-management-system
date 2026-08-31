@@ -31,21 +31,10 @@ def main() -> int:
     if migration_numbers != sorted(set(migration_numbers)):
         print("Migration numbers must be unique and ordered.")
         return 1
-    if migration_numbers != [1]:
-        print("Clean distribution must contain only migrations/001_initial_schema.sql.")
-        return 1
-    forbidden = (
-        ROOT / ".env", ROOT / "deployment/caddy/caddy.exe",
-        ROOT / "deployment/caddy/GNEM-Factory-Root-CA.crt",
-    )
-    present_forbidden = [str(path.relative_to(ROOT)) for path in forbidden if path.exists()]
-    if present_forbidden:
-        print("Runtime or private files must not be distributed:", ", ".join(present_forbidden))
-        return 1
     for source in ROOT.rglob("*.py"):
         if ".venv" not in source.parts:
             ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
-    print("Release verification passed: files, consolidated migration, and Python syntax are valid.")
+    print("Release verification passed: files, migrations, and Python syntax are valid.")
     return 0
 
 

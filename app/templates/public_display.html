@@ -4,30 +4,31 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#06233f">
-  <title>GNEM Daily Factory Display</title>
+  <title>GNEM Slurry Production Details</title>
   <link rel="stylesheet" href="/static/display.css">
 </head>
 <body>
   <main class="display-shell">
     <header class="display-head">
-      <div><span>GNEM SLURRY PRODUCTION TRACKER</span><h1>Daily Factory Display / 每日工厂看板</h1></div>
+      <div><span id="display-brand-title">GNEM SLURRY PRODUCTION DETAILS / GNEM 制浆生产明细</span><h1 id="display-brand-subtitle">Daily Factory Display / 每日工厂看板</h1></div>
       <div class="display-date"><strong id="display-date">—</strong><small id="last-updated">Loading / 加载中</small></div>
     </header>
     <section class="display-layout">
-      <section class="display-section task-section">
-        <div class="section-head"><h2>Today's task / 今日任务</h2><span>Today only / 仅当日</span></div>
+      <section class="display-section task-section" data-display-block="task">
+        <div class="section-head"><h2 data-block-title>Today's task / 今日任务</h2><span>Today only / 仅当日</span></div>
         <div id="task-details" class="display-task-list"></div>
       </section>
-      <article class="display-section rate-card production-rates-card"><div class="rate-pair"><div><small>Achievement Rate / 达成率</small><strong id="achievement-rate">—</strong></div><div><small>Qualified Rate / 合格率</small><strong id="qualified-rate">—</strong></div></div><small id="achievement-note" hidden></small><small id="qualified-note" hidden></small></article>
-      <section class="display-section reminder-section"><div class="section-head"><h2>Reminders / 提醒事项</h2><span>Today / 当日</span></div><div id="display-reminders" class="display-reminder-list"></div></section>
-      <section class="display-section ongoing-section">
-        <div class="section-head"><h2>Ongoing issue tracker /<br>进行中问题追踪</h2><span>Requires follow-up / 需跟进</span></div>
+      <article class="display-section rate-card production-rates-card" data-display-block="rates"><div class="section-head"><h2 data-block-title>Production rates / 生产率</h2></div><div class="rate-pair"><div><small>Achievement Rate / 达成率</small><strong id="achievement-rate">—</strong></div><div><small>Qualified Rate / 合格率</small><strong id="qualified-rate">—</strong></div></div><small id="achievement-note" hidden></small><small id="qualified-note" hidden></small></article>
+      <section class="display-section pending-qualification-section" data-display-block="pending_qualification"><div class="section-head"><h2 data-block-title>Pending qualification data / 待补录合格数据</h2><span>Follow-up required / 需要跟进</span></div><div id="pending-qualifications" class="pending-qualification-list"></div></section>
+      <section class="display-section reminder-section" data-display-block="reminders"><div class="section-head"><h2 data-block-title>Reminders / 提醒事项</h2><span>Today / 当日</span></div><div id="display-reminders" class="display-reminder-list"></div></section>
+      <section class="display-section ongoing-section" data-display-block="ongoing">
+        <div class="section-head"><h2 data-block-title>Ongoing issue tracker / 进行中问题追踪</h2><span>Requires follow-up / 需跟进</span></div>
         <div id="ongoing-events" class="ongoing-list"></div>
       </section>
-    </section>
-    <section class="display-section event-detail-section">
-      <div class="section-head"><h2>Event details / 事件明细</h2><span id="event-detail-date">Today / 当日</span></div>
-      <div id="event-tracker" class="display-table-wrap"></div>
+      <section class="display-section event-detail-section" data-display-block="events">
+        <div class="section-head"><h2 data-block-title>Event details / 事件明细</h2><span id="event-detail-date">Today / 当日</span></div>
+        <div id="event-tracker" class="display-table-wrap"></div>
+      </section>
     </section>
     <footer>Read-only factory display / 只读工厂展示屏 · Detailed records are entered in GNEM / 详细记录请在 GNEM 系统中录入</footer>
   </main>

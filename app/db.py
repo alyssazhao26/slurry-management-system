@@ -22,7 +22,7 @@ REQUIRED_SYSTEM_IMPORT_COLUMNS = {
         "actual_finish_date", "custom_fields",
     },
 }
-REQUIRED_SYSTEM_IMPORT_TABLES = {"production_records", "abnormality_reports", "event_type_options"}
+REQUIRED_SYSTEM_IMPORT_TABLES = {"production_records", "abnormality_reports", "event_type_options", "display_settings"}
 
 
 def _connection_pool():

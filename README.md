@@ -20,9 +20,7 @@ This is a controlled kiosk design. Limit the app to factory devices/network acce
 
 ## Data and migration rules
 
-The repository starts with one consolidated migration: `migrations/001_initial_schema.sql`. It creates the complete current two-schema baseline and seeds the active event, cost-failure, and configurable-field choices for a clean installation. Historical development migrations are intentionally excluded from this distribution. After deploying this baseline, never edit an applied migration; add the next numbered migration instead.
-
-This consolidated baseline is for new installations. An existing GNEM production database must retain and continue from its own recorded `schema_migrations` history rather than replacing that history with this file.
+The executable deployment set currently contains two files: `001_initial_schema.sql` creates the baseline, and `002_approved_feature_round.sql` applies all approved database changes from this development round in dependency order. Earlier pre-baseline history is retained under `migrations\legacy_prebaseline` for audit only and is not executed. After deployment, never edit a migration already applied to that department database; add the next unique numbered migration instead.
 
 ## Power BI import
 
@@ -51,8 +49,6 @@ After an approved code/UI update, use `Restart_GNEM_Slurry_Tracker.cmd` and refr
 Open `/display` on the department screen. It refreshes from SQL every 15 seconds. The first row shows **Today's task / 今日任务**, achievement rate, and qualified rate. The task is strictly today's task; both rates use the latest date with production records so that end-of-day and pending qualification entry do not make the screen look empty. Machine cards are cumulative actual/plan/event totals, followed by the ongoing issue tracker and the selected day's event details.
 
 Only a manager can edit the task: open **Manager workspace**, unlock it, complete **Today's task / 今日任务**, and save. Select one or more task types (Production, Cleaning, Custom). Selecting Production reveals the Formula and Amount needed fields; selecting Custom reveals its description field. The read-only display updates automatically after the save.
-
-For a large read-only screen, `/display?autoscroll=1` enables continuous downward scrolling with TV-sized text. The server IP, internal DNS name, and any optional LAN-only HTTP display route are deployment-specific and must not be committed to the repository.
 
 ## Where submitted records are stored
 

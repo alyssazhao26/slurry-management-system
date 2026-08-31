@@ -28,7 +28,10 @@ def create_app():
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             token, supplied = session.get("csrf_token"), request.headers.get("X-CSRF-Token", "")
             if not token or not secrets.compare_digest(token, supplied):
-                abort(403, "Invalid request token. Refresh the page and try again.")
+                response = jsonify(error="Your secure session changed. The application will renew it and retry the save.")
+                response.status_code = 403
+                response.headers["X-Session-Refresh"] = "required"
+                return response
 
     @app.after_request
     def security_headers(response):

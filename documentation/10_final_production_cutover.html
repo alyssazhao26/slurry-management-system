@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -45,7 +45,7 @@
 </table>
 <p>Both are necessary in the current code. This is a useful industry-standard separation: the operational app area is protected, while reporting connects only to the controlled import schema. Do not delete either schema.</p>
 <h2>2. Keep the migration history</h2>
-<p>The clean distribution begins with one consolidated file: <code>migrations/001_initial_schema.sql</code>. It creates the complete current two-schema baseline and seeds active UI choices. Historical development migrations are excluded. After deployment, never edit an applied migration; add a new numbered migration instead. Existing production databases must retain their original migration history.</p>
+<p>The migration runner currently executes two files in order: <code>001_initial_schema.sql</code> creates the baseline, and <code>002_approved_feature_round.sql</code> applies every approved database change from this development round in dependency order. Earlier pre-baseline history remains under <code>migrations\legacy_prebaseline</code> for audit only and is not executed. After deployment, never edit a migration already applied to that department database; add the next unique numbered migration instead.</p>
 <h2>3. Create the three MySQL accounts</h2>
 <p>Open MySQL Workbench on the final server as the MySQL administrator. Copy <code>deployment\sql\create_production_accounts.sql.template</code> to a private temporary file, replace every password placeholder with a long random password, replace <code>POWERBI_GATEWAY_IP</code> with the approved Power BI computer/gateway IP, then run it. Never save the completed version in GitHub or a shared folder.</p>
 <table>
