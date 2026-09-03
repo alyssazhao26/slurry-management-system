@@ -17,6 +17,6 @@ if errorlevel 1 (
 echo.
 echo GNEM Slurry Tracker is running or was already running.
 echo Open https://slurry-management.local on approved employee and manager computers.
-echo Open http://SERVER-IP:5001/display on the read-only factory display.
+echo Open http://172.23.19.139:5000/display on the read-only factory display.
 pause
 endlocal

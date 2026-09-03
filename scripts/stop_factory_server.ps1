@@ -14,9 +14,12 @@ param()
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $caddyPath = Join-Path $projectRoot "deployment\caddy\caddy.exe"
+$python = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$serverSettings = & $python -c "from app.config import Config; print(Config.WEB_HOST); print(Config.WEB_PORT); print(Config.DISPLAY_HTTP_HOST); print(Config.DISPLAY_HTTP_PORT)"
+if ($LASTEXITCODE -ne 0 -or $serverSettings.Count -ne 4) { throw "GNEM could not read its listener settings from .env." }
 
-function Stop-GnemListener([int]$Port, [string]$ExpectedCommand, [string]$Component) {
-    $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+function Stop-GnemListener([string]$Address, [int]$Port, [string]$ExpectedCommand, [string]$Component) {
+    $listener = Get-NetTCPConnection -LocalAddress $Address -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $listener) {
         Write-Host "$Component is not running."
         return
@@ -24,15 +27,15 @@ function Stop-GnemListener([int]$Port, [string]$ExpectedCommand, [string]$Compon
 
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
     if (-not $process.CommandLine -or $process.CommandLine -notmatch $ExpectedCommand) {
-        throw "Port $Port is used by an unexpected process. It was not stopped; ask IT."
+        throw "$Address`:$Port is used by an unexpected process. It was not stopped; ask IT."
     }
 
     Stop-Process -Id $listener.OwningProcess -Force
     Write-Host "$Component stopped."
 }
 
-Stop-GnemListener -Port 5000 -ExpectedCommand "main\.py" -Component "GNEM web server"
-Stop-GnemListener -Port 5001 -ExpectedCommand "display_server\.py" -Component "GNEM HTTP display server"
+Stop-GnemListener -Address $serverSettings[0] -Port ([int]$serverSettings[1]) -ExpectedCommand "main\.py" -Component "GNEM web server"
+Stop-GnemListener -Address $serverSettings[2] -Port ([int]$serverSettings[3]) -ExpectedCommand "display_server\.py" -Component "GNEM HTTP display server"
 
 if (Get-NetTCPConnection -LocalPort 443 -State Listen -ErrorAction SilentlyContinue) {
     $gateway = Get-NetTCPConnection -LocalPort 443 -State Listen | Select-Object -First 1

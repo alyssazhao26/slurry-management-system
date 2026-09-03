@@ -38,8 +38,8 @@ class Config:
     BEHIND_TLS_PROXY = os.getenv("BEHIND_TLS_PROXY", "false").lower() == "true"
     WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
     WEB_PORT = int(os.getenv("WEB_PORT", "5000"))
-    DISPLAY_HTTP_HOST = os.getenv("DISPLAY_HTTP_HOST", "0.0.0.0")
-    DISPLAY_HTTP_PORT = int(os.getenv("DISPLAY_HTTP_PORT", "5001"))
+    DISPLAY_HTTP_HOST = os.getenv("DISPLAY_HTTP_HOST", "172.23.19.139")
+    DISPLAY_HTTP_PORT = int(os.getenv("DISPLAY_HTTP_PORT", "5000"))
     MANAGER_LOGIN_MAX_ATTEMPTS = int(os.getenv("MANAGER_LOGIN_MAX_ATTEMPTS", "5"))
     MANAGER_LOGIN_WINDOW_SECONDS = int(os.getenv("MANAGER_LOGIN_WINDOW_SECONDS", "300"))
     # Reserved for a future manager-only, server-side integration. No provider
@@ -62,5 +62,10 @@ class Config:
             raise RuntimeError("Set ALLOWED_HOSTS to the employee server's private DNS name or IP address.")
         if not cls.BEHIND_TLS_PROXY:
             raise RuntimeError("Production requires HTTPS through a TLS reverse proxy (set BEHIND_TLS_PROXY=true after configuring it).")
+        if cls.DISPLAY_HTTP_PORT == cls.WEB_PORT and (
+            cls.DISPLAY_HTTP_HOST in {"0.0.0.0", "::"}
+            or cls.DISPLAY_HTTP_HOST == cls.WEB_HOST
+        ):
+            raise RuntimeError("The HTTP display and HTTPS backend may share a port only when they bind to different specific IP addresses.")
         if cls.DEPLOYMENT_MODE == "single_server" and cls.DB["host"].lower() not in {"127.0.0.1", "localhost", "::1"}:
             raise RuntimeError("Single-server mode requires DB_HOST to be local (127.0.0.1 or localhost).")

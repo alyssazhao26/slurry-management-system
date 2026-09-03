@@ -25,16 +25,31 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 
 New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+$serverSettings = & $python -c "from app.config import Config; print(Config.WEB_HOST); print(Config.WEB_PORT); print(Config.DISPLAY_HTTP_HOST); print(Config.DISPLAY_HTTP_PORT)"
+if ($LASTEXITCODE -ne 0 -or $serverSettings.Count -ne 4) {
+    throw "GNEM could not read its listener settings from .env."
+}
+$webHost = $serverSettings[0]
+$webPort = [int]$serverSettings[1]
+$displayHost = $serverSettings[2]
+$displayPort = [int]$serverSettings[3]
 
 function Start-GnemProcess(
+    [string]$Address,
     [int]$Port,
     [string]$ScriptName,
+    [string]$ExpectedCommand,
     [string]$Component,
     [string]$OutputLog,
     [string]$ErrorLog
 ) {
-    if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
-        Write-Host "$Component is already running on port $Port."
+    $listener = Get-NetTCPConnection -LocalAddress $Address -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($listener) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
+        if (-not $process.CommandLine -or $process.CommandLine -notmatch $ExpectedCommand) {
+            throw "$Address`:$Port is used by an unexpected process. Do not stop it; ask IT."
+        }
+        Write-Host "$Component is already running on $Address`:$Port."
         return
     }
 
@@ -47,8 +62,8 @@ function Start-GnemProcess(
         -RedirectStandardError $ErrorLog
 
     for ($attempt = 0; $attempt -lt 40; $attempt++) {
-        if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
-            Write-Host "$Component started successfully on port $Port."
+        if (Get-NetTCPConnection -LocalAddress $Address -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
+            Write-Host "$Component started successfully on $Address`:$Port."
             return
         }
         Start-Sleep -Milliseconds 250
@@ -56,5 +71,5 @@ function Start-GnemProcess(
     throw "$Component did not start. Check $ErrorLog or ask IT."
 }
 
-Start-GnemProcess -Port 5000 -ScriptName "main.py" -Component "GNEM HTTPS application backend" -OutputLog $stdoutLog -ErrorLog $stderrLog
-Start-GnemProcess -Port 5001 -ScriptName "display_server.py" -Component "GNEM read-only HTTP display" -OutputLog $displayStdoutLog -ErrorLog $displayStderrLog
+Start-GnemProcess -Address $webHost -Port $webPort -ScriptName "main.py" -ExpectedCommand "main\.py" -Component "GNEM HTTPS application backend" -OutputLog $stdoutLog -ErrorLog $stderrLog
+Start-GnemProcess -Address $displayHost -Port $displayPort -ScriptName "display_server.py" -ExpectedCommand "display_server\.py" -Component "GNEM read-only HTTP display" -OutputLog $displayStdoutLog -ErrorLog $displayStderrLog

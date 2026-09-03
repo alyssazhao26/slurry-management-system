@@ -2,13 +2,3 @@ https://slurry-management.local {
     tls internal
     reverse_proxy 127.0.0.1:5000
 }
-
-# Certificate-free LAN access for read-only department displays such as Google TV.
-# All record-entry, manager, and write API routes remain unavailable over HTTP.
-http://172.23.19.139 {
-    @tv_display path /display /static/* /api/public-display
-    handle @tv_display {
-        reverse_proxy 127.0.0.1:5000
-    }
-    respond 404
-}

@@ -16,7 +16,7 @@ This is a controlled kiosk design. Limit the app to factory devices/network acce
 2. Create the MySQL database and least-privilege application user outside this repository. Use a database administrator account for migrations; use the restricted application account only while the website is running.
 3. `python -m venv .venv` then `.venv\\Scripts\\pip install -r requirements.txt`
 4. Run `.venv\\Scripts\\python scripts/apply_migrations.py` once with the administrator database credentials. Then grant the application database user `SELECT, INSERT, UPDATE` permissions on both `slurry_management.*` and `system_import.*`.
-5. For the intended one-server factory deployment, keep `WEB_HOST=127.0.0.1`, `DB_HOST=127.0.0.1`, and the Caddy HTTPS gateway for employee and manager computers. The separate display server listens on `DISPLAY_HTTP_PORT=5001` and exposes only the read-only factory display over HTTP.
+5. For the intended one-server factory deployment, keep `WEB_HOST=127.0.0.1`, `DB_HOST=127.0.0.1`, and the Caddy HTTPS gateway for employee and manager computers. The separate display server binds the server's LAN address on port 5000 and exposes only the read-only factory display over HTTP.
 
 ## Data and migration rules
 
@@ -46,7 +46,7 @@ After an approved code/UI update, use `Restart_GNEM_Slurry_Tracker.cmd` and refr
 
 ## Department display
 
-Open `http://SERVER-IP:5001/display` on the department screen. This separate read-only HTTP service does not depend on Caddy, while employee and manager computers continue using `https://slurry-management.local`. The display refreshes from SQL every 15 seconds. The first row shows **Today's task / 今日任务**, achievement rate, and qualified rate. The task is strictly today's task; both rates use the latest date with production records so that end-of-day and pending qualification entry do not make the screen look empty. Machine cards are cumulative actual/plan/event totals, followed by the ongoing issue tracker and the selected day's event details.
+Open `http://172.23.19.139:5000/display` on the department screen. This separate read-only HTTP service does not depend on Caddy, while employee and manager computers continue using `https://slurry-management.local`. The display refreshes from SQL every 15 seconds. The first row shows **Today's task / 今日任务**, achievement rate, and qualified rate. The task is strictly today's task; both rates use the latest date with production records so that end-of-day and pending qualification entry do not make the screen look empty. Machine cards are cumulative actual/plan/event totals, followed by the ongoing issue tracker and the selected day's event details.
 
 Only a manager can edit the task: open **Manager workspace**, unlock it, complete **Today's task / 今日任务**, and save. Select one or more task types (Production, Cleaning, Custom). Selecting Production reveals the Formula and Amount needed fields; selecting Custom reveals its description field. The read-only display updates automatically after the save.
 
