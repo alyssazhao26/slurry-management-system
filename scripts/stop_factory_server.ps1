@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Stops only the GNEM web application and its local HTTPS gateway.
+Stops only the GNEM web application.
 
 .DESCRIPTION
 MySQL is deliberately left running: stopping the web page must not interrupt or
@@ -13,7 +13,6 @@ param()
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$caddyPath = Join-Path $projectRoot "deployment\caddy\caddy.exe"
 
 function Stop-GnemListener([int]$Port, [string]$ExpectedCommand, [string]$Component) {
     $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -32,14 +31,3 @@ function Stop-GnemListener([int]$Port, [string]$ExpectedCommand, [string]$Compon
 }
 
 Stop-GnemListener -Port 5000 -ExpectedCommand "main\.py" -Component "GNEM web server"
-
-if (Get-NetTCPConnection -LocalPort 443 -State Listen -ErrorAction SilentlyContinue) {
-    $gateway = Get-NetTCPConnection -LocalPort 443 -State Listen | Select-Object -First 1
-    $gatewayProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $($gateway.OwningProcess)"
-    if ($gatewayProcess.ExecutablePath -and $gatewayProcess.ExecutablePath -ieq $caddyPath) {
-        Stop-Process -Id $gateway.OwningProcess -Force
-        Write-Host "GNEM HTTPS gateway stopped."
-    } else {
-        Write-Host "HTTPS gateway on port 443 belongs to another process and was not stopped."
-    }
-}

@@ -32,11 +32,12 @@ class Config:
     LOG_DIR = str(ROOT / "logs")
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
-    SESSION_COOKIE_SECURE = ENVIRONMENT == "production"
+    BEHIND_TLS_PROXY = os.getenv("BEHIND_TLS_PROXY", "false").lower() == "true"
+    DISPLAY_ONLY_HTTP = os.getenv("DISPLAY_ONLY_HTTP", "true").lower() == "true"
+    SESSION_COOKIE_SECURE = ENVIRONMENT == "production" and BEHIND_TLS_PROXY
     PERMANENT_SESSION_LIFETIME = 60 * 60 * 8
     ALLOWED_HOSTS = {host.strip().lower() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if host.strip()}
-    BEHIND_TLS_PROXY = os.getenv("BEHIND_TLS_PROXY", "false").lower() == "true"
-    WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
+    WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
     WEB_PORT = int(os.getenv("WEB_PORT", "5000"))
     MANAGER_LOGIN_MAX_ATTEMPTS = int(os.getenv("MANAGER_LOGIN_MAX_ATTEMPTS", "5"))
     MANAGER_LOGIN_WINDOW_SECONDS = int(os.getenv("MANAGER_LOGIN_WINDOW_SECONDS", "300"))
@@ -56,9 +57,9 @@ class Config:
             raise RuntimeError("SECRET_KEY must be a unique private value in production.")
         if not cls.MANAGER_PIN or cls.MANAGER_PIN == "manager-demo-pin-change-me":
             raise RuntimeError("MANAGER_PIN must be changed in production.")
-        if cls.ALLOWED_HOSTS <= {"localhost", "127.0.0.1"}:
+        if not cls.DISPLAY_ONLY_HTTP and cls.ALLOWED_HOSTS <= {"localhost", "127.0.0.1"}:
             raise RuntimeError("Set ALLOWED_HOSTS to the employee server's private DNS name or IP address.")
-        if not cls.BEHIND_TLS_PROXY:
-            raise RuntimeError("Production requires HTTPS through a TLS reverse proxy (set BEHIND_TLS_PROXY=true after configuring it).")
+        if not cls.BEHIND_TLS_PROXY and not cls.DISPLAY_ONLY_HTTP:
+            raise RuntimeError("Production requires either a TLS reverse proxy or display-only HTTP mode.")
         if cls.DEPLOYMENT_MODE == "single_server" and cls.DB["host"].lower() not in {"127.0.0.1", "localhost", "::1"}:
             raise RuntimeError("Single-server mode requires DB_HOST to be local (127.0.0.1 or localhost).")

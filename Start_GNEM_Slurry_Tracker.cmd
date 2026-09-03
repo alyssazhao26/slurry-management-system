@@ -7,16 +7,8 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start_secure_gateway.ps1"
-if errorlevel 1 (
-    echo.
-    echo Secure HTTPS gateway could not start. Give the displayed message and logs\caddy.stderr.log to IT.
-    pause
-    exit /b 1
-)
 echo.
 echo GNEM Slurry Tracker is running or was already running.
-echo Open the normal factory web link in a browser.
-echo Open https://slurry-management.local on an approved factory computer.
+echo Open http://SERVER-IP:5000/display on the factory display.
 pause
 endlocal

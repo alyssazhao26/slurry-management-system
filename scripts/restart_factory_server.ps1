@@ -31,4 +31,3 @@ if ($listener) {
 }
 
 & (Join-Path $PSScriptRoot "start_factory_server.ps1")
-& (Join-Path $PSScriptRoot "start_secure_gateway.ps1")

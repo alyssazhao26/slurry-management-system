@@ -62,7 +62,6 @@ function Add-ControlButton([string]$Text, [int]$Left, [scriptblock]$Action) {
 
 Add-ControlButton "Start / 启动" 26 {
     & (Join-Path $PSScriptRoot "start_factory_server.ps1")
-    & (Join-Path $PSScriptRoot "start_secure_gateway.ps1")
 }
 Add-ControlButton "Restart / 重启" 184 { & (Join-Path $PSScriptRoot "restart_factory_server.ps1") }
 Add-ControlButton "Stop / 停止" 342 { & (Join-Path $PSScriptRoot "stop_factory_server.ps1") }
