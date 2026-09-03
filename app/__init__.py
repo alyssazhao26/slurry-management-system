@@ -6,7 +6,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from .config import Config
 
 
-def create_app():
+def create_app(display_only=False):
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_object(Config)
     Config.validate_production_settings()
@@ -20,9 +20,7 @@ def create_app():
 
     @app.before_request
     def security_checks():
-        remote_address = request.remote_addr or ""
-        remote_http = not request.is_secure and remote_address not in {"127.0.0.1", "::1"}
-        if app.config["DISPLAY_ONLY_HTTP"] and remote_http:
+        if display_only:
             public_display_path = (
                 request.path == "/display"
                 or request.path == "/api/public-display"
@@ -32,7 +30,7 @@ def create_app():
                 abort(404)
 
         host = request.host.split(":", 1)[0].lower()
-        if not (app.config["DISPLAY_ONLY_HTTP"] and remote_http) and host not in app.config["ALLOWED_HOSTS"]:
+        if not display_only and host not in app.config["ALLOWED_HOSTS"]:
             abort(400, "Unrecognised host.")
         if "csrf_token" not in session:
             session["csrf_token"] = secrets.token_urlsafe(32)
@@ -51,7 +49,7 @@ def create_app():
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Cache-Control"] = "no-store" if request.path.startswith("/api/manager") else "private, no-cache"
         response.headers["Content-Security-Policy"] = "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'"
-        if app.config["ENVIRONMENT"] == "production" and request.is_secure:
+        if app.config["ENVIRONMENT"] == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 

@@ -16,7 +16,7 @@ This is a controlled kiosk design. Limit the app to factory devices/network acce
 2. Create the MySQL database and least-privilege application user outside this repository. Use a database administrator account for migrations; use the restricted application account only while the website is running.
 3. `python -m venv .venv` then `.venv\\Scripts\\pip install -r requirements.txt`
 4. Run `.venv\\Scripts\\python scripts/apply_migrations.py` once with the administrator database credentials. Then grant the application database user `SELECT, INSERT, UPDATE` permissions on both `slurry_management.*` and `system_import.*`.
-5. For the factory display, set `WEB_HOST=0.0.0.0` and `DISPLAY_ONLY_HTTP=true`, then open `http://SERVER-IP:5000/display`. Remote HTTP access is limited in the application to the read-only display and its assets; manager and write routes remain local-only. Keep `DB_HOST=127.0.0.1` and do not expose MySQL or port 5000 to the internet.
+5. For the intended one-server factory deployment, keep `WEB_HOST=127.0.0.1`, `DB_HOST=127.0.0.1`, and the Caddy HTTPS gateway for employee and manager computers. The separate display server listens on `DISPLAY_HTTP_PORT=5001` and exposes only the read-only factory display over HTTP.
 
 ## Data and migration rules
 
@@ -40,13 +40,13 @@ The default is one always-on factory server running both the employee web app an
 
 ## Starting after a restart
 
-IT should run `scripts\install_autostart_task.ps1` once as an administrator with a dedicated non-administrator Windows service account. After that, Windows starts GNEM automatically after every reboot. For manual control, use the single Desktop launcher **GNEM Server Control Panel.cmd**. Its Start, Restart, and Stop buttons control only GNEM's web application; MySQL stays running and stored records are unchanged. Startup and restart use port-readiness checks rather than fixed waits, so they continue as soon as the service is ready.
+IT should run `scripts\install_autostart_task.ps1` once as an administrator with a dedicated non-administrator Windows service account. After that, Windows starts GNEM automatically after every reboot. For manual control, use the single Desktop launcher **GNEM Server Control Panel.cmd**. Its Start, Restart, and Stop buttons control the HTTPS application, Caddy gateway, and separate HTTP display; MySQL stays running and stored records are unchanged.
 
 After an approved code/UI update, use `Restart_GNEM_Slurry_Tracker.cmd` and refresh the browser with `Ctrl + F5`. The normal Start shortcut does not restart a running server.
 
 ## Department display
 
-Open `http://SERVER-IP:5000/display` on the department screen. This direct HTTP display does not require Caddy. It refreshes from SQL every 15 seconds. The first row shows **Today's task / 今日任务**, achievement rate, and qualified rate. The task is strictly today's task; both rates use the latest date with production records so that end-of-day and pending qualification entry do not make the screen look empty. Machine cards are cumulative actual/plan/event totals, followed by the ongoing issue tracker and the selected day's event details.
+Open `http://SERVER-IP:5001/display` on the department screen. This separate read-only HTTP service does not depend on Caddy, while employee and manager computers continue using `https://slurry-management.local`. The display refreshes from SQL every 15 seconds. The first row shows **Today's task / 今日任务**, achievement rate, and qualified rate. The task is strictly today's task; both rates use the latest date with production records so that end-of-day and pending qualification entry do not make the screen look empty. Machine cards are cumulative actual/plan/event totals, followed by the ongoing issue tracker and the selected day's event details.
 
 Only a manager can edit the task: open **Manager workspace**, unlock it, complete **Today's task / 今日任务**, and save. Select one or more task types (Production, Cleaning, Custom). Selecting Production reveals the Formula and Amount needed fields; selecting Custom reveals its description field. The read-only display updates automatically after the save.
 

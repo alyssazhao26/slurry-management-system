@@ -17,31 +17,44 @@ $python = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $logDirectory = Join-Path $projectRoot "logs"
 $stdoutLog = Join-Path $logDirectory "web-server.stdout.log"
 $stderrLog = Join-Path $logDirectory "web-server.stderr.log"
+$displayStdoutLog = Join-Path $logDirectory "display-server.stdout.log"
+$displayStderrLog = Join-Path $logDirectory "display-server.stderr.log"
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Python environment is missing. Ask IT to install project requirements before starting the server."
 }
 
-$existingListener = Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue
-if ($existingListener) {
-    Write-Host "GNEM web server is already running on local port 5000."
-    exit 0
-}
-
 New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
-Start-Process `
-    -FilePath $python `
-    -ArgumentList "main.py" `
-    -WorkingDirectory $projectRoot `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $stdoutLog `
-    -RedirectStandardError $stderrLog
 
-for ($attempt = 0; $attempt -lt 40; $attempt++) {
-    if (Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue) {
-        Write-Host "GNEM web server started successfully."
-        exit 0
+function Start-GnemProcess(
+    [int]$Port,
+    [string]$ScriptName,
+    [string]$Component,
+    [string]$OutputLog,
+    [string]$ErrorLog
+) {
+    if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
+        Write-Host "$Component is already running on port $Port."
+        return
     }
-    Start-Sleep -Milliseconds 250
+
+    Start-Process `
+        -FilePath $python `
+        -ArgumentList $ScriptName `
+        -WorkingDirectory $projectRoot `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $OutputLog `
+        -RedirectStandardError $ErrorLog
+
+    for ($attempt = 0; $attempt -lt 40; $attempt++) {
+        if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
+            Write-Host "$Component started successfully on port $Port."
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "$Component did not start. Check $ErrorLog or ask IT."
 }
-throw "GNEM did not start. Check $stderrLog or ask IT."
+
+Start-GnemProcess -Port 5000 -ScriptName "main.py" -Component "GNEM HTTPS application backend" -OutputLog $stdoutLog -ErrorLog $stderrLog
+Start-GnemProcess -Port 5001 -ScriptName "display_server.py" -Component "GNEM read-only HTTP display" -OutputLog $displayStdoutLog -ErrorLog $displayStderrLog
