@@ -6,6 +6,8 @@ This project uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH
 
 Major multi-department release. One protected application now serves isolated Slurry and Slitting databases, department-specific employee workflows and read-only displays. Slitting adds model lookup management, roll-based production reporting, daily task scheduling, abnormalities, QR inventory, and the consolidated Slitting migration 003. Common migrations 001 and 002 remain unchanged.
 
+The deployment-ready branch also corrects Slitting backups to use the shared dedicated backup account, or optional `SLITTING_DB_BACKUP_USER` credentials, instead of selecting the restricted web account.
+
 ### Added
 
 - Added a saved font-size option for every factory-display canvas block, reflected in both the editor preview and public display.

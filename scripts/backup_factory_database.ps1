@@ -43,8 +43,12 @@ if (-not $dbUser -or -not $dbPassword) {
     $dbPassword = Get-ProjectSetting "DB_PASSWORD"
 }
 if ($Department -eq "slitting") {
-    $dbUser = Get-ProjectSetting "SLITTING_DB_USER" $dbUser
-    $dbPassword = Get-ProjectSetting "SLITTING_DB_PASSWORD" $dbPassword
+    $slittingBackupUser = Get-ProjectSetting "SLITTING_DB_BACKUP_USER"
+    $slittingBackupPassword = Get-ProjectSetting "SLITTING_DB_BACKUP_PASSWORD"
+    if ($slittingBackupUser -and $slittingBackupPassword) {
+        $dbUser = $slittingBackupUser
+        $dbPassword = $slittingBackupPassword
+    }
 }
 if (-not $dbUser -or -not $dbPassword) { throw "Set DB_USER/DB_PASSWORD or DB_BACKUP_USER/DB_BACKUP_PASSWORD in .env." }
 $resolvedBackupDirectory = [IO.Path]::GetFullPath($backupDirectory).TrimEnd('\\')
