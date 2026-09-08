@@ -2,7 +2,9 @@
 
 This project uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
-## Unreleased
+## 3.0.0 - 2026-09-07
+
+Major multi-department release. One protected application now serves isolated Slurry and Slitting databases, department-specific employee workflows and read-only displays. Slitting adds model lookup management, roll-based production reporting, daily task scheduling, abnormalities, QR inventory, and the consolidated Slitting migration 003. Common migrations 001 and 002 remain unchanged.
 
 ### Added
 
@@ -21,9 +23,6 @@ This project uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH
 
 ### Changed
 
-- Manager edits to existing events no longer require an actual finish date or solution unless the edit newly closes the event; legacy resolved records can be corrected without inventing completion data.
-- Consolidated every approved post-baseline database change from this development round into the single migration `002_approved_feature_round.sql`.
-- Promoted the approved desktop test build into the GitHub-ready repository while preserving the committed `001` baseline and placing only new database changes in `002_approved_feature_round.sql`.
 - Removed the Event tracker page's eyebrow, explanatory subtitle, and automatic-save subtitle while retaining its main title and event date.
 - Removed the Production data page's eyebrow, explanatory subtitle, and automatic-save subtitle while retaining its main title and record date.
 - Event Tracker records are ordered by event date and time descending (newest first).
@@ -54,8 +53,8 @@ This project uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH
 
 - Python syntax check passed.
 - JavaScript syntax check passed.
-- Automated test suite passed: 3 tests.
-- Changes are currently limited to the Desktop test copy and have not been promoted to the GitHub/main workspace.
+- Automated test suite passed: 34 tests.
+- Both Slurry and Slitting display routes return successfully on the local display listener.
 
 ## Release rules
 

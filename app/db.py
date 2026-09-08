@@ -4,10 +4,22 @@ from threading import Lock
 import mysql.connector
 from mysql.connector import pooling
 from flask import current_app
+from .departments import database_config, import_schema, current_department
+import re
 
 
-_pool = None
+_pools = {}
 _pool_lock = Lock()
+
+class DepartmentCursor:
+    def __init__(self, cursor, schema):
+        self._cursor, self._schema = cursor, schema
+    def execute(self, operation, params=None):
+        return self._cursor.execute(re.sub(r'\bsystem_import\.', self._schema + '.', operation), params)
+    def executemany(self, operation, params):
+        return self._cursor.executemany(re.sub(r'\bsystem_import\.', self._schema + '.', operation), params)
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
 
 REQUIRED_SYSTEM_IMPORT_COLUMNS = {
     "production_records": {
@@ -26,32 +38,28 @@ REQUIRED_SYSTEM_IMPORT_TABLES = {"production_records", "abnormality_reports", "e
 
 
 def _connection_pool():
-    """Create one bounded MySQL pool per GNEM server process."""
-    global _pool
+    config = database_config()
+    key = (current_department(), tuple(sorted(config.items())))
     with _pool_lock:
-        if _pool is None:
-            config = dict(current_app.config["DB"])
-            config.update(
-                pool_name="gnem_slurry_pool",
-                pool_size=current_app.config["DB_POOL_SIZE"],
-                pool_reset_session=True,
-            )
-            _pool = pooling.MySQLConnectionPool(**config)
-    return _pool
+        if key not in _pools:
+            _pools[key] = pooling.MySQLConnectionPool(
+                pool_name='gnem_' + current_department() + '_' + str(len(_pools)), pool_size=current_app.config['DB_POOL_SIZE'],
+                pool_reset_session=True, **config)
+    return _pools[key]
 
 
 def verify_ui_schema():
     """Fail fast if the database cannot store fields shown by the running UI."""
-    connection = mysql.connector.connect(**current_app.config["DB"])
+    connection = mysql.connector.connect(**database_config())
     try:
         cursor = connection.cursor()
         cursor.execute(
             """
             SELECT table_name, column_name
             FROM information_schema.columns
-            WHERE table_schema = 'system_import'
+            WHERE table_schema = %s
               AND table_name IN ('production_records', 'abnormality_reports', 'event_type_options')
-            """
+            """, (import_schema(),)
         )
         present = {table: set() for table in REQUIRED_SYSTEM_IMPORT_TABLES}
         for table_name, column_name in cursor.fetchall():
@@ -62,7 +70,7 @@ def verify_ui_schema():
             for column in sorted(expected - present[table])
         ]
         existing_tables = set(present)
-        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'system_import'")
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = %s", (import_schema(),))
         existing_tables = {row[0] for row in cursor.fetchall()}
         missing.extend(f"system_import.{table}" for table in REQUIRED_SYSTEM_IMPORT_TABLES - existing_tables)
         if missing:
@@ -77,13 +85,15 @@ def verify_ui_schema():
 @contextmanager
 def transaction():
     conn = _connection_pool().get_connection()
+    cursor = None
     try:
-        cursor = conn.cursor(dictionary=True)
+        cursor = DepartmentCursor(conn.cursor(dictionary=True), import_schema())
         yield cursor
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
-        cursor.close()
+        if cursor is not None:
+            cursor.close()
         conn.close()

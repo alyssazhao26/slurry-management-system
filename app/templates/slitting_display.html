@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#063b5c">
+  <title>GNEM Slitting Production</title>
+  <link rel="stylesheet" href="/static/display.css?v=20260907-taskoverview">
+</head>
+<body class="slitting-public-display">
+  <main class="display-shell">
+    <header class="display-head">
+      <div><span id="display-brand-title">GNEM SLITTING PRODUCTION / GNEM 分切生产</span><h1 id="display-brand-subtitle">Daily Slitting Display / 分切每日看板</h1></div>
+      <div class="display-date"><strong id="display-date">—</strong><small id="display-status">Loading / 加载中</small></div>
+    </header>
+    <section class="display-layout">
+      <section class="display-section slitting-task-section" data-display-block="slitting_task">
+        <div class="section-head"><h2 data-block-title>Slitting task overview / 分切及包装任务概览</h2></div>
+        <div id="slitting-display-task"></div>
+      </section>
+      <section class="display-section slitting-events-section" data-display-block="slitting_events">
+        <div class="section-head"><h2 data-block-title>Ongoing abnormalities / 进行中异常</h2></div>
+        <div id="slitting-display-events" class="display-table-wrap"></div>
+      </section>
+    </section>
+    <footer>Read-only Slitting display / 分切只读看板 · Detailed records are entered in GNEM / 详细记录请在 GNEM 系统中录入</footer>
+  </main>
+  <script src="/static/slitting-display.js?v=20260907-modelunits"></script>
+</body>
+</html>

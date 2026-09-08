@@ -11,12 +11,18 @@ def create_app(display_only=False):
     app.config.from_object(Config)
     Config.validate_production_settings()
     from .db import verify_ui_schema
+    from .departments import department_context
     with app.app_context():
         verify_ui_schema()
+        with department_context('slitting'):
+            verify_ui_schema()
     if app.config["BEHIND_TLS_PROXY"]:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
     os.makedirs(app.config["LOG_DIR"], exist_ok=True)
     app.extensions["manager_login_attempts"] = defaultdict(deque)
+
+    from .departments import select_request_department, current_department
+    app.before_request(select_request_department)
 
     @app.before_request
     def security_checks():
@@ -24,6 +30,7 @@ def create_app(display_only=False):
             public_display_path = (
                 request.path == "/display"
                 or request.path == "/api/public-display"
+                or (current_department() == "slitting" and request.path in {"/api/slitting/summary", "/api/daily-report"})
                 or request.path.startswith("/static/")
             )
             if request.method not in {"GET", "HEAD"} or not public_display_path:
@@ -48,7 +55,7 @@ def create_app(display_only=False):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Cache-Control"] = "no-store" if request.path.startswith("/api/manager") else "private, no-cache"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'"
         if app.config["ENVIRONMENT"] == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
@@ -66,7 +73,7 @@ def create_app(display_only=False):
 
     @app.context_processor
     def csrf_context():
-        return {"csrf_token": session["csrf_token"]}
+        return {"csrf_token": session["csrf_token"], "department": current_department()}
     from .routes import web
     app.register_blueprint(web)
     return app

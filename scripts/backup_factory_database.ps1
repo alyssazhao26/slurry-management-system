@@ -9,17 +9,20 @@ on the command line or in Task Scheduler arguments.
 #>
 
 [CmdletBinding()]
-param()
+param([ValidateSet("slurry", "slitting")][string]$Department = "slurry")
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $projectRoot ".env"
+$departmentEnvFile = Join-Path $projectRoot ".env.departments"
 if (-not (Test-Path -LiteralPath $envFile)) { throw "Missing .env file." }
 
 function Get-ProjectSetting([string]$Name, [string]$Default = "") {
-    $match = Get-Content -LiteralPath $envFile | Where-Object { $_ -match "^$([regex]::Escape($Name))=" } | Select-Object -First 1
+    $settingLines = @(Get-Content -LiteralPath $envFile)
+    if (Test-Path -LiteralPath $departmentEnvFile) { $settingLines += Get-Content -LiteralPath $departmentEnvFile }
+    $match = $settingLines | Where-Object { $_ -match "^$([regex]::Escape($Name))=" } | Select-Object -Last 1
     if (-not $match) { return $Default }
-    return $match.Substring($Name.Length + 1).Trim().Trim('"').Trim()
+    return $match.Substring($Name.Length + 1).Trim().Trim('"').Trim("'").Trim()
 }
 
 $backupDirectory = Get-ProjectSetting "BACKUP_DIRECTORY" "C:\GNEM_Backups"
@@ -27,12 +30,21 @@ $retentionDays = [int](Get-ProjectSetting "BACKUP_RETENTION_DAYS" "30")
 $dbHost = Get-ProjectSetting "DB_HOST" "127.0.0.1"
 $dbPort = Get-ProjectSetting "DB_PORT" "3306"
 $dbName = Get-ProjectSetting "DB_NAME" "slurry_management"
+$importSchema = Get-ProjectSetting "IMPORT_SCHEMA" "system_import"
+if ($Department -eq "slitting") {
+    $dbName = Get-ProjectSetting "SLITTING_DB_NAME" "slitting_management"
+    $importSchema = Get-ProjectSetting "SLITTING_IMPORT_SCHEMA" "slitting_system_import"
+}
 $dbUser = Get-ProjectSetting "DB_BACKUP_USER"
 $dbPassword = Get-ProjectSetting "DB_BACKUP_PASSWORD"
 if (-not $dbUser -or -not $dbPassword) {
     # Pilot fallback: use the app account until a backup-only account exists.
     $dbUser = Get-ProjectSetting "DB_USER"
     $dbPassword = Get-ProjectSetting "DB_PASSWORD"
+}
+if ($Department -eq "slitting") {
+    $dbUser = Get-ProjectSetting "SLITTING_DB_USER" $dbUser
+    $dbPassword = Get-ProjectSetting "SLITTING_DB_PASSWORD" $dbPassword
 }
 if (-not $dbUser -or -not $dbPassword) { throw "Set DB_USER/DB_PASSWORD or DB_BACKUP_USER/DB_BACKUP_PASSWORD in .env." }
 $resolvedBackupDirectory = [IO.Path]::GetFullPath($backupDirectory).TrimEnd('\\')
@@ -50,16 +62,16 @@ if ($configuredDumpPath) {
 }
 New-Item -ItemType Directory -Force -Path $backupDirectory | Out-Null
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
-$backupFile = Join-Path $backupDirectory "gnem_backup_$stamp.sql"
+$backupFile = Join-Path $backupDirectory "gnem_backup_${Department}_$stamp.sql"
 $optionFile = Join-Path $env:TEMP ("gnem-mysql-" + [guid]::NewGuid().ToString("N") + ".cnf")
 
 try {
     [string]::Join([Environment]::NewLine, @("[client]", "user=$dbUser", "password=$dbPassword", "host=$dbHost", "port=$dbPort")) | Set-Content -LiteralPath $optionFile -Encoding ascii -NoNewline
-    & $dumpCommand "--defaults-extra-file=$optionFile" "--single-transaction" "--routines" "--events" "--databases" $dbName "system_import" "--result-file=$backupFile"
+    & $dumpCommand "--defaults-extra-file=$optionFile" "--single-transaction" "--routines" "--events" "--databases" $dbName $importSchema "--result-file=$backupFile"
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $backupFile) -or (Get-Item -LiteralPath $backupFile).Length -eq 0) {
         throw "mysqldump failed; no valid backup was accepted."
     }
-    Get-ChildItem -LiteralPath $backupDirectory -Filter "gnem_backup_*.sql" -File |
+    Get-ChildItem -LiteralPath $backupDirectory -Filter "gnem_backup_${Department}_*.sql" -File |
         Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$retentionDays) } |
         Remove-Item -Force
     Write-Host "Backup completed: $backupFile"

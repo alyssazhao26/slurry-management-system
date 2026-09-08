@@ -10,3 +10,4 @@ def test_normal_production_does_not_escalate():
 
 def test_high_severity_abnormality_escalates():
     assert analyse_abnormality('equipment', 'high', 10, 'Motor fault').status == 'open'
+

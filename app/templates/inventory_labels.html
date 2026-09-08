@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Selected roll QR labels</title><link rel="stylesheet" href="/static/style.css"></head>
+<body class="label-page"><main class="multi-label-shell">
+  <div class="label-actions"><button id="print-label" class="primary">Print / Save as PDF · 打印/另存为PDF</button><button id="close-label" class="secondary">Close / 关闭</button></div>
+  {% for product in products %}
+  <section class="roll-label printable-label">
+    <h1>{{ product.roll_number }}</h1>
+    <img src="/api/inventory/products/{{ product.id }}/qr.png" alt="QR code for {{ product.roll_number }}">
+    <p class="label-spec">{{ product.slit_width_mm or '—' }} mm × {{ product.roll_length_m or '—' }} m × {{ product.thickness_um or '—' }} μm</p>
+  </section>
+  {% endfor %}
+</main><script src="/static/inventory-label.js" defer></script></body></html>

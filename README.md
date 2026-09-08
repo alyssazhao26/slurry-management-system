@@ -20,7 +20,7 @@ This is a controlled kiosk design. Limit the app to factory devices/network acce
 
 ## Data and migration rules
 
-The executable deployment set currently contains two files: `001_initial_schema.sql` creates the baseline, and `002_approved_feature_round.sql` applies all approved database changes from this development round in dependency order. Earlier pre-baseline history is retained under `migrations\legacy_prebaseline` for audit only and is not executed. After deployment, never edit a migration already applied to that department database; add the next unique numbered migration instead.
+The immutable common chain contains `001_initial_schema.sql` and `002_approved_feature_round.sql`. Slitting additionally receives `migrations\departments\slitting\003_slitting_department.sql`; Slurry does not. Each department has its own migration ledger. Earlier pre-baseline history is retained under `migrations\legacy_prebaseline` for audit only and is not executed. After deployment, never edit an applied migration; add the next unique numbered migration instead.
 
 ## Power BI import
 
@@ -46,7 +46,7 @@ After an approved code/UI update, use `Restart_GNEM_Slurry_Tracker.cmd` and refr
 
 ## Department display
 
-Open `http://172.23.19.139:5000/display` on the department screen. This separate read-only HTTP service does not depend on Caddy, while employee and manager computers continue using `https://slurry-management.local`. The display refreshes from SQL every 15 seconds. The first row shows **Today's task / 今日任务**, achievement rate, and qualified rate. The task is strictly today's task; both rates use the latest date with production records so that end-of-day and pending qualification entry do not make the screen look empty. Machine cards are cumulative actual/plan/event totals, followed by the ongoing issue tracker and the selected day's event details.
+Use `http://SERVER_LAN_IP:5000/display?department=slurry&autoscroll=1` for the Slurry screen and `http://SERVER_LAN_IP:5000/display?department=slitting&autoscroll=1` for the Slitting screen. Remove `&autoscroll=1` when automatic scrolling is not wanted. This separate read-only HTTP service does not depend on Caddy, while employee and manager computers continue using `https://slurry-management.local`.
 
 Only a manager can edit the task: open **Manager workspace**, unlock it, complete **Today's task / 今日任务**, and save. Select one or more task types (Production, Cleaning, Custom). Selecting Production reveals the Formula and Amount needed fields; selecting Custom reveals its description field. The read-only display updates automatically after the save.
 

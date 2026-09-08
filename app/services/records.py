@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 from flask import current_app
 
 from ..db import transaction
+from ..departments import current_department
+from . import slitting
 from .analysis import Analysis, analyse_abnormality, analyse_production
 
 
@@ -63,6 +65,8 @@ def _existing_sync(cursor, source_type, client_record_id, payload_hash):
 
 
 def create_production(payload, actor_id=None):
+    if current_department() == "slitting":
+        payload = slitting.normalise_production(payload)
     payload = {**payload, "record_date": date.today().isoformat()}
     planned, actual = (float(payload[key]) for key in ("planned_quantity", "actual_quantity"))
     raw_qualified = str(payload.get("qualified_quantity", "")).strip()
@@ -100,6 +104,8 @@ def create_production(payload, actor_id=None):
         )
         existing = cursor.fetchone()
         if existing:
+            if current_department() == "slitting":
+                raise ValueError("This machine, shift and run ID already exist. Use the qualified-roll follow-up or manager edit.")
             if existing["qualified_pending"] and qualified is not None:
                 existing_actual = float(existing["actual_quantity"])
                 if qualified > existing_actual:
@@ -158,6 +164,18 @@ def create_production(payload, actor_id=None):
 
 
 def update_production_qualification(record_id, payload, actor_id=None):
+    if current_department() == "slitting":
+        existing = manager_get_record('production', record_id)
+        # The operator enters output rolls; the stored qualified quantity is area.
+        converted = slitting.normalise_production({'qualified_rolls':payload.get('qualified_quantity')}, existing)
+        with transaction() as cursor:
+            qualified = converted['qualified_quantity']
+            if qualified == '': raise ValueError('Enter qualified output rolls.')
+            actual = float(existing['actual_quantity'])
+            cursor.execute('UPDATE system_import.production_records SET qualified_quantity=%s, qualified_pending=FALSE, qualified_rate=%s, custom_fields=%s, row_version=row_version+1 WHERE id=%s',
+                (qualified, qualified/actual if actual else None, json.dumps(converted['custom_fields']),record_id))
+            _audit(cursor,actor_id,'production_record',record_id,'qualified_rolls_follow_up',converted)
+        return record_id
     try:
         qualified = float(payload["qualified_quantity"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -199,6 +217,8 @@ def update_production_qualification(record_id, payload, actor_id=None):
 
 
 def create_abnormality(payload, actor_id=None):
+    if current_department() == "slitting":
+        payload = slitting.normalise_abnormality(payload)
     payload = {**payload, "event_date": date.today().isoformat()}
     description = str(payload.get("description", "")).strip()
     immediate_action = str(payload.get("immediate_action", "")).strip()
@@ -245,6 +265,8 @@ def create_abnormality(payload, actor_id=None):
             "SELECT event_value FROM system_import.event_type_options WHERE is_active = TRUE"
         )
         active_event_types = {row["event_value"] for row in cursor.fetchall()}
+        if current_department() == "slitting":
+            active_event_types = set(slitting.CATEGORIES)
         if payload["event_type"] not in active_event_types:
             raise ValueError("An invalid or inactive event type was supplied.")
         cursor.execute(
@@ -313,14 +335,14 @@ def list_records(record_type, manager=False, page=1, page_size=50, record_date=N
         "tracker": """
             SELECT id, event_date, start_time, end_time, shift_name, machine_code, machine_type, event_type, severity,
                    description, immediate_action, responsible_person, target_finish_date,
-                   solution_provided, actual_finish_date, effectiveness, is_resolved, state
+                   solution_provided, actual_finish_date, effectiveness, is_resolved, custom_fields, state
             FROM system_import.abnormality_reports
         """,
         "ongoing": """
             SELECT id, event_date, start_time, end_time, shift_name, machine_code, machine_type, event_type,
                    severity, is_resolved, effective_time_cost, solution_provided,
                    cost_failure_types, responsible_person, target_finish_date,
-                   actual_finish_date, state, created_at
+                   actual_finish_date, description, custom_fields, state, created_at
             FROM system_import.abnormality_reports
         """,
         "analysis": """
@@ -368,6 +390,8 @@ def list_records(record_type, manager=False, page=1, page_size=50, record_date=N
     if record_type == "tracker" and not manager:
         for row in rows:
             row.pop("solution_provided", None)
+    if current_department() == "slitting":
+        rows = [slitting.enrich(row) for row in rows]
     return _json_safe_rows(rows), total
 
 
@@ -529,6 +553,8 @@ def get_cost_failure_types(include_inactive=False):
 
 
 def get_event_types(include_inactive=False):
+    if current_department() == "slitting":
+        return [{"event_value":key,"display_name":key,"is_active":True} for key in slitting.CATEGORIES]
     query = "SELECT event_value, display_name, is_active FROM system_import.event_type_options"
     if not include_inactive:
         query += " WHERE is_active = TRUE"
@@ -539,6 +565,8 @@ def get_event_types(include_inactive=False):
 
 
 def save_event_type(payload):
+    if current_department() == "slitting":
+        raise ValueError("Slitting uses the approved main/subcategory catalog.")
     event_value = str(payload.get("event_value", "")).strip()
     display_name = str(payload.get("display_name", "")).strip()
     if not event_value or not display_name or len(event_value) > 80:
@@ -557,6 +585,8 @@ def save_event_type(payload):
 
 
 def deactivate_event_type(event_value):
+    if current_department() == "slitting":
+        raise ValueError("Slitting uses the approved main/subcategory catalog.")
     with transaction() as cursor:
         cursor.execute(
             "UPDATE system_import.event_type_options SET is_active = FALSE WHERE event_value = %s",
@@ -676,8 +706,15 @@ def manager_dashboard():
     }
 
 
-DAILY_TASK_TYPES = {"production", "cleaning", "custom"}
+DAILY_TASK_TYPES = {"production", "cleaning", "custom", "slitting_production", "slitting_schedule"}
 DAILY_TASK_MACHINES = {*(f"J{number}" for number in range(1, 10)), *(f"J10-{number}" for number in range(1, 6))}
+SLITTING_TASK_PRODUCTS = {
+    "513MM", "514.9MM", "515.6MM", "547MM", "242MM", "515.4MM", "270.6MM", "270MM",
+    "88.8MM", "67.1MM", "73.8MM", "96MM", "264.5MM", "269.8MM", "61MM", "73.7MM",
+    "196MM", "557.20MM", "62.3MM", "61.1MM", "61.6MM", "93.7MM", "73.5MM",
+}
+SLITTING_TASK_STATUSES = {"production_in_progress", "re_cut", "label_changing"}
+SLITTING_TARGET_UNITS = {"sr", "MR", "custom"}
 
 DISPLAY_BLOCK_DEFAULTS = [
     {"key": "task", "title": "Today's task / 今日任务", "visible": True, "order": 10, "width": 2, "height": 2, "font_size": 16},
@@ -685,7 +722,11 @@ DISPLAY_BLOCK_DEFAULTS = [
     {"key": "pending_qualification", "title": "Pending qualification data / 待补录合格数据", "visible": True, "order": 25, "width": 1, "height": 1, "font_size": 16},
     {"key": "reminders", "title": "Reminders / 提醒事项", "visible": True, "order": 30, "width": 1, "height": 1, "font_size": 16},
     {"key": "ongoing", "title": "Ongoing issue tracker / 进行中问题追踪", "visible": True, "order": 40, "width": 2, "height": 2, "font_size": 16},
-    {"key": "events", "title": "Event details / 事件明细", "visible": True, "order": 50, "width": 3, "height": 2, "font_size": 16},
+    {"key": "events", "title": "Event details / 事件明细", "visible": True, "order": 50, "width": 5, "height": 2, "font_size": 16},
+]
+SLITTING_DISPLAY_BLOCK_DEFAULTS = [
+    {"key": "slitting_task", "title": "Slitting task overview / 分切及包装任务概览", "visible": True, "order": 5, "width": 5, "height": 3, "font_size": 16},
+    {"key": "slitting_events", "title": "Ongoing abnormalities / 进行中异常", "visible": True, "order": 10, "width": 5, "height": 2, "font_size": 16},
 ]
 DISPLAY_EVENT_COLUMN_DEFAULTS = [
     {"key": "event_date", "label": "Event date / 事件日期", "visible": True, "order": 10},
@@ -713,8 +754,26 @@ DISPLAY_BRANDING_DEFAULTS = {
     "display_eyebrow": "GNEM SLURRY PRODUCTION DETAILS / GNEM 制浆生产明细",
     "display_title": "Daily Factory Display / 每日工厂看板",
 }
+SLITTING_DISPLAY_BRANDING_DEFAULTS = {
+    "title": "GNEM Slitting Production / GNEM 分切生产",
+    "subtitle": "Central factory records · Local SQL",
+    "display_eyebrow": "GNEM SLITTING PRODUCTION / GNEM 分切生产",
+    "display_title": "Daily Slitting Display / 分切每日看板",
+}
 
-def default_display_settings(): return {"branding": dict(DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in DISPLAY_BLOCK_DEFAULTS], "event_columns": [dict(x) for x in DISPLAY_EVENT_COLUMN_DEFAULTS]}
+SLITTING_EVENT_COLUMN_DEFAULTS = [
+    {"key": "machine_code", "label": "Machine / 机台", "visible": True, "order": 10},
+    {"key": "event_type", "label": "Main category / 主类别", "visible": True, "order": 20},
+    {"key": "subcategory", "label": "Subcategory / 子类别", "visible": True, "order": 30},
+    {"key": "event_notes", "label": "Notes / 备注", "visible": True, "order": 40},
+    {"key": "duration_minutes", "label": "Time loss (min) / 损失分钟", "visible": True, "order": 50},
+    {"key": "is_resolved", "label": "Resolved / 已解决", "visible": True, "order": 60},
+]
+
+def default_display_settings():
+    if current_department() == "slitting":
+        return {"layout_version": 2, "branding": dict(SLITTING_DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in SLITTING_DISPLAY_BLOCK_DEFAULTS], "event_columns": [dict(x) for x in SLITTING_EVENT_COLUMN_DEFAULTS]}
+    return {"layout_version": 2, "branding": dict(DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in DISPLAY_BLOCK_DEFAULTS], "event_columns": [dict(x) for x in DISPLAY_EVENT_COLUMN_DEFAULTS]}
 
 def get_display_settings():
     with transaction() as cursor:
@@ -722,6 +781,11 @@ def get_display_settings():
         row = cursor.fetchone()
     if not row: return default_display_settings()
     saved = json.loads(row["settings_json"]) if isinstance(row["settings_json"], str) else row["settings_json"]
+    if int(saved.get("layout_version", 1)) < 2:
+        for block in saved.get("blocks", []):
+            block["width"] = {1: 2, 2: 4, 3: 5}.get(int(block.get("width", 1)), 2)
+            if block.get("type") == "static_text": block.setdefault("heading_level", "h2")
+        saved["layout_version"] = 2
     defaults = default_display_settings()
     if isinstance(saved.get("branding"), dict):
         defaults["branding"].update({key: str(saved["branding"].get(key, value)) for key, value in defaults["branding"].items()})
@@ -735,7 +799,7 @@ def get_display_settings():
     return defaults
 
 def save_display_settings(payload, actor_id=None):
-    defaults, cleaned = default_display_settings(), {}
+    defaults, cleaned = default_display_settings(), {"layout_version": 2}
     branding = payload.get("branding", defaults["branding"])
     if not isinstance(branding, dict): raise ValueError("Branding must be an object.")
     cleaned_branding = {key: str(branding.get(key, fallback)).strip() for key, fallback in defaults["branding"].items()}
@@ -753,8 +817,8 @@ def save_display_settings(payload, actor_id=None):
             except (TypeError, ValueError) as exc: raise ValueError("Display order must be a whole number.") from exc
             result = {"key": fallback["key"], label_key: label, "visible": bool(item.get("visible", False)), "order": order}
             if group == "blocks":
-                result["width"] = max(1, min(int(item.get("width", fallback["width"])), 3))
-                result["height"] = max(1, min(int(item.get("height", fallback.get("height", 1))), 3))
+                result["width"] = max(1, min(int(item.get("width", fallback["width"])), 5))
+                result["height"] = max(1, min(int(item.get("height", fallback.get("height", 1))), 5))
                 result["font_size"] = max(12, min(int(item.get("font_size", fallback.get("font_size", 16))), 36))
             items.append(result)
         if group == "blocks":
@@ -767,10 +831,13 @@ def save_display_settings(payload, actor_id=None):
                 title, content = str(item.get("title", "")).strip(), str(item.get("content", "")).strip()
                 if not title or len(title) > 160: raise ValueError("Permanent block titles must contain 1 to 160 characters.")
                 if len(content) > 4000: raise ValueError("Permanent text must be 4,000 characters or fewer.")
+                heading_level = str(item.get("heading_level", "h2")).lower()
+                if heading_level not in {"h1", "h2"}: raise ValueError("Permanent block heading must be Heading 1 or Heading 2.")
                 items.append({"key": key, "type": "static_text", "title": title, "content": content,
+                              "heading_level": heading_level,
                               "visible": bool(item.get("visible", True)), "order": max(0, min(int(item.get("order", 900)), 999)),
-                              "width": max(1, min(int(item.get("width", 3)), 3)),
-                              "height": max(1, min(int(item.get("height", 1)), 3)),
+                              "width": max(1, min(int(item.get("width", 5)), 5)),
+                              "height": max(1, min(int(item.get("height", 1)), 5)),
                               "font_size": max(12, min(int(item.get("font_size", 16)), 36))})
         cleaned[group] = items
     with transaction() as cursor:
@@ -796,6 +863,11 @@ def _legacy_task_items(task):
 def get_daily_task(record_date=None):
     """Return one display-safe daily task; absent tasks are represented explicitly."""
     selected_date = record_date or date.today()
+    if isinstance(selected_date, str):
+        try:
+            selected_date = date.fromisoformat(selected_date)
+        except ValueError as exc:
+            raise ValueError("Choose a valid date.") from exc
     with transaction() as cursor:
         cursor.execute(
             """
@@ -829,11 +901,73 @@ def save_daily_task(payload, actor_id=None):
             reminders.append(clean_reminder)
 
     task_items = []
+    if current_department() == "slitting":
+        production_count = schedule_count = 0
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict): raise ValueError("Each task item must be valid.")
+            task_type = str(raw_item.get("type", "")).strip().lower()
+            if task_type == "slitting_production":
+                production_count += 1
+                product_item = str(raw_item.get("product_item", "")).replace(" ", "").strip().upper()
+                status = str(raw_item.get("production_status", "")).strip()
+                target_unit = str(raw_item.get("target_unit", "")).strip()
+                custom_unit = str(raw_item.get("custom_unit", "")).strip()
+                if product_item not in SLITTING_TASK_PRODUCTS: raise ValueError("Choose a listed Slitting production item.")
+                if status not in SLITTING_TASK_STATUSES: raise ValueError("Choose a valid Slitting production status.")
+                if target_unit not in SLITTING_TARGET_UNITS: raise ValueError("Specify whether the production target uses sr, MR, or a custom unit.")
+                if target_unit == "custom" and (not custom_unit or len(custom_unit) > 30): raise ValueError("Enter a custom production target unit of 30 characters or fewer.")
+                try: target = float(raw_item.get("production_target"))
+                except (TypeError, ValueError) as exc: raise ValueError("Production target must be a number.") from exc
+                if target <= 0 or target > 1000000: raise ValueError("Production target must be greater than zero.")
+                task_items.append({"type": task_type, "product_item": product_item, "production_status": status, "production_target": target, "target_unit": target_unit, "custom_unit": custom_unit if target_unit == "custom" else ""})
+            elif task_type == "slitting_schedule":
+                schedule_count += 1
+                machine = str(raw_item.get("machine", "")).strip().upper()
+                product_item = str(raw_item.get("product_item", "")).replace(" ", "").strip().upper()
+                planned_input = str(raw_item.get("planned_input", "")).strip()
+                operator = str(raw_item.get("operator", "")).strip()
+                shift_lead = str(raw_item.get("shift_lead", "")).strip()
+                if machine not in slitting.MACHINES: raise ValueError("Choose a listed Slitting machine.")
+                if product_item not in SLITTING_TASK_PRODUCTS: raise ValueError("Choose a listed Slitting production item.")
+                if not planned_input or len(planned_input) > 120: raise ValueError("Schedule planned input is required and must be 120 characters or fewer.")
+                if not operator or len(operator) > 120: raise ValueError("Schedule operator is required and must be 120 characters or fewer.")
+                if not shift_lead or len(shift_lead) > 120: raise ValueError("Schedule shift lead is required and must be 120 characters or fewer.")
+                task_items.append({"type": task_type, "machine": machine, "product_item": product_item, "planned_input": planned_input, "operator": operator, "shift_lead": shift_lead})
+            else:
+                raise ValueError("Slitting tasks must be production overview or schedule rows.")
+        if not production_count: raise ValueError("Add at least one Slitting production item.")
+        if not schedule_count: raise ValueError("Add at least one machine schedule row.")
+    else:
+        task_items = _clean_standard_daily_task_items(raw_items)
+
+    task_types = [item["type"] for item in task_items]
+    first_production = next((item for item in task_items if item["type"] == "production"), {})
+    first_custom = next((item for item in task_items if item["type"] == "custom"), {})
+
+    with transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO system_import.daily_tasks
+                (record_date, task_types, task_items, reminders, custom_task, formula_code, amount_needed, machine_assigned, updated_by)
+            VALUES (CURDATE(), %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                task_types = VALUES(task_types), task_items = VALUES(task_items), reminders = VALUES(reminders), custom_task = VALUES(custom_task),
+                formula_code = VALUES(formula_code), amount_needed = VALUES(amount_needed),
+                machine_assigned = VALUES(machine_assigned), updated_by = VALUES(updated_by)
+            """,
+            (json.dumps(task_types), json.dumps(task_items), json.dumps(reminders), first_custom.get("description") or None,
+             first_production.get("formula_code"), first_production.get("amount_needed"), first_production.get("machine_assigned"), actor_id),
+        )
+        _audit(cursor, actor_id, "daily_task", 0, "saved", {"task_types": task_types, "item_count": len(task_items), "reminder_count": len(reminders)})
+
+
+def _clean_standard_daily_task_items(raw_items):
+    task_items = []
     for raw_item in raw_items:
         if not isinstance(raw_item, dict):
             raise ValueError("Each task item must be valid.")
         task_type = str(raw_item.get("type", "")).strip().lower()
-        if task_type not in DAILY_TASK_TYPES:
+        if task_type not in {"production", "cleaning", "custom"}:
             raise ValueError("Choose a valid task type for every item.")
         item = {"type": task_type, "description": str(raw_item.get("description", "")).strip()}
         if task_type == "custom" and not item["description"]:
@@ -859,26 +993,7 @@ def save_daily_task(payload, actor_id=None):
             item.update({"formula_code": formula_code, "amount_needed": amount_needed, "machine_assigned": machine_assigned})
         task_items.append(item)
 
-    task_types = [item["type"] for item in task_items]
-    first_production = next((item for item in task_items if item["type"] == "production"), {})
-    first_custom = next((item for item in task_items if item["type"] == "custom"), {})
-
-    with transaction() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO system_import.daily_tasks
-                (record_date, task_types, task_items, reminders, custom_task, formula_code, amount_needed, machine_assigned, updated_by)
-            VALUES (CURDATE(), %s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                task_types = VALUES(task_types), task_items = VALUES(task_items), reminders = VALUES(reminders), custom_task = VALUES(custom_task),
-                formula_code = VALUES(formula_code), amount_needed = VALUES(amount_needed),
-                machine_assigned = VALUES(machine_assigned),
-                updated_by = VALUES(updated_by)
-            """,
-            (json.dumps(task_types), json.dumps(task_items), json.dumps(reminders), first_custom.get("description") or None,
-             first_production.get("formula_code"), first_production.get("amount_needed"), first_production.get("machine_assigned"), actor_id),
-        )
-        _audit(cursor, actor_id, "daily_task", 0, "saved", {"task_types": task_types, "item_count": len(task_items), "reminder_count": len(reminders)})
+    return task_items
 
 
 def daily_report(record_date):
@@ -892,11 +1007,10 @@ def daily_report(record_date):
             """
             SELECT record_date, shift_name, machine_code, formula_code, batch_number,
                    planned_quantity, actual_quantity, qualified_quantity,
-                   achievement_rate, qualified_rate, notes, created_at
+                   achievement_rate, qualified_rate, notes, custom_fields, created_at
             FROM system_import.production_records
             WHERE record_date = %s
             ORDER BY shift_name, machine_code, batch_number
-            LIMIT 20
             """,
             (selected_date,),
         )
@@ -908,15 +1022,17 @@ def daily_report(record_date):
                           COALESCE(TIME_FORMAT(end_time, '%H:%i'), '—')) AS event_time,
                    duration_minutes, event_type, severity, description, immediate_action,
                    is_resolved, responsible_person, target_finish_date, actual_finish_date,
-                   solution_provided, effectiveness
+                   solution_provided, effectiveness, custom_fields
             FROM system_import.abnormality_reports
             WHERE event_date = %s
             ORDER BY start_time, machine_code
-            LIMIT 20
             """,
             (selected_date,),
         )
         events = cursor.fetchall()
+    if current_department() == "slitting":
+        production = [slitting.enrich(row) for row in production]
+        events = [slitting.enrich(row) for row in events]
     return {
         "report_date": record_date,
         "production": _json_safe_rows(production),
@@ -994,7 +1110,7 @@ def public_display_summary(record_date=None):
             SELECT event_date, start_time, end_time, shift_name, machine_code, machine_type,
                    event_type, severity, duration_minutes, is_resolved, state,
                    responsible_person, target_finish_date, effective_time_cost,
-                   cost_failure_types, potential_cost, description, immediate_action
+                   cost_failure_types, description, immediate_action
             FROM system_import.abnormality_reports
             WHERE event_date = %s
             ORDER BY event_date DESC, start_time DESC, created_at DESC
@@ -1034,6 +1150,10 @@ def public_display_summary(record_date=None):
         (value for value in (task_updated, production["latest_production_update"], events["latest_event_update"]) if value is not None),
         default=None,
     )
+    if current_department() == "slitting":
+        pending_qualifications = [r for r in slitting.summary()['records'] if r.get('qualified_quantity') is None]
+        for row in pending_qualifications:
+            row['actual_quantity'] = row['input_rolls'] * row['stations']
     return {
         "display_date": selected_date.isoformat(),
         "daily_task": _json_safe_rows([daily_task])[0],
@@ -1064,6 +1184,8 @@ def manager_get_record(record_type, record_id):
         row = cursor.fetchone()
     if not row:
         raise ValueError("Record not found.")
+    if current_department() == "slitting":
+        row = slitting.enrich(row)
     return _json_safe_rows([row])[0]
 
 
@@ -1091,6 +1213,8 @@ def _manager_completion_values(existing, payload):
 def manager_update_record(record_type, record_id, payload, actor_id=None):
     """Manager corrections retain the original record date and write an audit event."""
     existing = manager_get_record(record_type, record_id)
+    if current_department() == "slitting":
+        payload = slitting.normalise_production(payload, existing) if record_type == "production" else slitting.normalise_abnormality(payload, existing)
     with transaction() as cursor:
         if record_type == "production":
             planned = float(payload.get("planned_quantity", existing["planned_quantity"]))
@@ -1126,5 +1250,8 @@ def manager_update_record(record_type, record_id, payload, actor_id=None):
                 payload.get("effective_time_cost") or None, is_resolved, "resolved" if is_resolved == "yes" else "open", record_id))
         else:
             raise ValueError("Unknown record type.")
+        if current_department() == "slitting":
+            table = 'production_records' if record_type == 'production' else 'abnormality_reports'
+            cursor.execute(f"UPDATE system_import.{table} SET custom_fields=%s WHERE id=%s", (json.dumps(payload['custom_fields']),record_id))
         _audit(cursor, actor_id, f"{record_type}_record", record_id, "manager_corrected", payload)
     return manager_get_record(record_type, record_id)

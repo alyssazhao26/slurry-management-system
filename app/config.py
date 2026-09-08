@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # This prevents an unrelated Windows-level WEB_HOST variable from forcing the
 # application back to localhost after a restart.
 load_dotenv(ROOT / ".env", override=True)
+load_dotenv(ROOT / ".env.departments", override=True)
 
 
 class Config:
@@ -22,6 +23,12 @@ class Config:
     if os.getenv("DB_SSL_CA"):
         DB["ssl_ca"] = os.getenv("DB_SSL_CA")
         DB["ssl_verify_cert"] = os.getenv("DB_SSL_VERIFY_CERT", "true").lower() == "true"
+    IMPORT_SCHEMA = os.getenv("IMPORT_SCHEMA", "system_import")
+    SLITTING_IMPORT_SCHEMA = os.getenv("SLITTING_IMPORT_SCHEMA", "slitting_system_import")
+    SLITTING_DB = {**DB, "database": os.getenv("SLITTING_DB_NAME", "slitting_management"),
+                   "user": os.getenv("SLITTING_DB_USER", DB["user"]),
+                   "password": os.getenv("SLITTING_DB_PASSWORD", DB["password"])}
+    QR_PUBLIC_BASE_URL = os.getenv("QR_PUBLIC_BASE_URL", "").rstrip("/")
     LOW_YIELD_THRESHOLD = float(os.getenv("LOW_YIELD_THRESHOLD", "0.90"))
     MANAGER_PIN = os.environ["MANAGER_PIN"] if ENVIRONMENT == "production" else os.getenv("MANAGER_PIN", "manager-demo-pin-change-me")
     SYNC_BATCH_LIMIT = int(os.getenv("SYNC_BATCH_LIMIT", "100"))

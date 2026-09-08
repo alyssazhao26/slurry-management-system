@@ -57,7 +57,7 @@ def test_display_sizes_snap_to_supported_grid(monkeypatch):
 
     saved = records.save_display_settings(settings)
 
-    assert saved["blocks"][0]["width"] == 3
+    assert saved["blocks"][0]["width"] == 5
     assert saved["blocks"][0]["height"] == 1
 
 

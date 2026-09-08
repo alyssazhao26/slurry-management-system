@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#082a4a">
   <title>GNEM Slurry Production Details</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20260908-evenrows">
 </head>
-<body>
+<body data-department="{{ department }}">
   <header class="topbar">
     <button class="brand" data-view="home" aria-label="Go to home">
       <span class="brand-mark">G</span>
@@ -16,6 +16,7 @@
       </span>
     </button>
     <nav aria-label="Main navigation / 主导航">
+      <button class="nav-link" data-slitting-only data-view="inventory" hidden>Inventory &amp; QR / 库存与二维码</button>
       <button class="nav-link" data-view="production-records">Production records / 生产记录</button>
       <button class="nav-link" data-view="ongoing">Ongoing events / 进行中事件</button>
       <button class="nav-link" data-view="tracker">Event tracker / 事件追踪</button>
@@ -42,7 +43,7 @@
           <div class="hero-actions">
             <button class="primary" data-view="production">Log production / 记录生产</button>
             <button class="secondary light" data-view="abnormality">Report event / 报告事件</button>
-            <button class="secondary light" data-view="daily-report">Slurry Production Details / 制浆生产明细</button>
+            <button class="secondary light" data-view="daily-report">{{ 'Slitting Production Details / 分切生产明细' if department == 'slitting' else 'Slurry Production Details / 制浆生产明细' }}</button>
           </div>
         </div>
         <div class="hero-panel task-home-panel">
@@ -64,29 +65,78 @@
       <dialog id="home-task-dialog" class="task-dialog">
         <form id="home-daily-task-form" method="dialog" class="form-card form-grid">
           <div class="dialog-title"><h2>Edit today's task / 编辑今日任务</h2><button type="button" id="close-home-task" class="secondary">Close / 关闭</button></div>
-          <p class="wide">Add one item per task. Each production item has its own formula, tanks, and assigned machine. / 每项任务单独添加；每个生产任务可设置独立配方、罐数和设备。</p>
+          <p class="wide" id="home-task-editor-help">Add one item per task. Each production item has its own formula, tanks, and assigned machine. / 每项任务单独添加；每个生产任务可设置独立配方、罐数和设备。</p>
           <div id="home-task-items" class="wide task-items"></div>
-          <div class="wide task-editor-actions"><button type="button" id="add-home-task-item" class="secondary">Add task / 添加任务</button></div>
+          <div class="wide task-editor-actions"><button type="button" id="add-home-task-item" class="secondary">Add task / 添加任务</button><button type="button" id="add-home-schedule-item" class="secondary" data-slitting-only hidden>Add schedule row / 添加排程行</button></div>
           <label class="wide">Reminders (optional) / 提醒事项（可选） (one bullet per line / 每行一条)<textarea id="home-reminders" rows="5" maxlength="3600" placeholder="Leave blank if there is no reminder. / 如无提醒可留空。&#10;Example: Confirm qualified quantity for J2 batch 2301"></textarea></label>
           <div class="wide form-actions"><button class="primary">Save today's tasks / 保存今日任务</button><span id="home-daily-task-status" aria-live="polite"></span></div>
         </form>
       </dialog>
     </section>
 
+    <section id="inventory" class="view">
+      <button class="back" data-view="home">← Back to overview / 返回概览</button>
+      <div class="view-head"><div class="section-title"><span>ROLL TRACEABILITY / 卷材追溯</span><h1>Product inventory &amp; transactions / 产品库存与出入库</h1><p>Register each finished roll, print its QR label, and review scan transactions.</p></div><button id="refresh-inventory" class="secondary">Refresh / 刷新</button></div>
+      <div id="inventory-summary" class="inventory-summary"></div>
+      <div class="inventory-layout">
+        <form id="inventory-product-form" class="form-card form-grid">
+          <h2 class="wide">Register an MR roll / 登记 MR 卷</h2>
+          <label>MR number / MR 卷号<input name="mr_number" required></label>
+          <label>Number of small rolls (optional) / 小卷数量（可选）<input name="small_roll_number" type="number" min="1" max="100" step="1" inputmode="numeric"><small>Enter 12 to create 00001–00012. Leave blank if uncut. / 输入 12 生成 00001–00012；未分切时留空。</small></label>
+          <label>Slit width (mm) / 分切宽度<input name="slit_width_mm" type="number" min="0.01" step="0.01"></label>
+          <label>Thickness (μm) / 厚度<input name="thickness_um" type="number" min="0.001" step="0.001"></label>
+          <label>Roll length (m) / 卷长<input name="roll_length_m" type="number" min="0.01" step="0.01"></label>
+          <label>Production date / 生产日期<input name="production_date" type="date"></label>
+          <label>Slitter / 分切机<input name="machine_code"></label>
+          <label>Location / 库位<input name="location"></label>
+          <label class="wide">Notes / 备注<textarea name="notes"></textarea></label>
+          <div class="wide form-actions"><button class="primary">Register &amp; create label / 登记并生成标签</button><span id="inventory-form-status"></span></div>
+        </form>
+        <section class="form-card qr-preview"><h2>Latest QR label / 最新二维码标签</h2><div id="inventory-qr-preview"><p>Register a roll to create its label.</p></div></section>
+      </div>
+      <section class="inventory-records-card">
+        <div class="inventory-tabs" role="tablist">
+          <button class="inventory-tab active" type="button" data-inventory-tab="products">Registered products / 已登记产品</button>
+          <button class="inventory-tab" type="button" data-inventory-tab="transactions">Recent transactions / 最近出入库记录</button>
+        </div>
+        <div id="inventory-products-panel" class="inventory-tab-panel active">
+          <form id="product-inventory-filters" class="inventory-filters">
+            <label>MR or roll number / MR 或卷号<input name="product_query" placeholder="MR or MR-00001 / MR 或小卷号"></label>
+            <label>Width (mm) / 宽度<input name="product_width" type="number" min="0.01" step="0.01" placeholder="Width / 宽度"></label>
+            <label>Status / 状态<select name="product_status"><option value="">All / 全部</option><option value="in_stock">In stock / 在库</option><option value="out">Checked out / 已出库</option></select></label>
+            <label>Checkout date / 出库日期<input name="checkout_date" type="date"></label>
+            <label>Register date / 登记日期<input name="register_date" type="date"></label>
+            <button class="secondary" type="submit">Search / 搜索</button><button class="secondary clear-inventory-filter" type="button" data-filter-form="product-inventory-filters">Clear / 清除</button>
+          </form>
+          <div class="inventory-selection-bar"><label><input id="select-visible-products" type="checkbox"> Select displayed / 选择当前页</label><span id="selected-product-count">0 selected / 已选 0</span><button id="print-selected-labels" class="primary" type="button" disabled>Print selected QR labels / 打印所选二维码</button></div>
+          <div id="inventory-products"></div><div id="product-pagination" class="pagination"></div>
+        </div>
+        <div id="inventory-transactions-panel" class="inventory-tab-panel">
+          <form id="transaction-inventory-filters" class="inventory-filters">
+            <label>Product or roll number / 产品或卷号<input name="transaction_query" placeholder="Search / 搜索"></label>
+            <label>Transaction date / 交易日期<input name="transaction_date" type="date"></label>
+            <button class="secondary" type="submit">Search / 搜索</button><button class="secondary clear-inventory-filter" type="button" data-filter-form="transaction-inventory-filters">Clear / 清除</button>
+          </form>
+          <div id="inventory-transactions"></div><div id="transaction-pagination" class="pagination"></div>
+        </div>
+      </section>
+    </section>
+
     <section id="daily-report" class="view">
       <button class="back" data-view="home">← Back to overview / 返回概览</button>
       <div class="view-head">
         <div class="section-title">
-          <span>SLURRY PRODUCTION DETAILS / 制浆生产明细</span>
-          <h1>Slurry Production Details / 制浆生产明细</h1>
+          <span>{{ 'SLITTING DAILY REPORT / 分切生产日报' if department == 'slitting' else 'SLURRY PRODUCTION DETAILS / 制浆生产明细' }}</span>
+          <h1>{{ 'Slitting Production Details / 分切生产明细' if department == 'slitting' else 'Slurry Production Details / 制浆生产明细' }}</h1>
           <p>Select a date to view production and event details. / 选择日期查看生产与事件明细。</p>
         </div>
         <div class="report-controls">
           <input id="report-date" type="date" aria-label="Report date / 报告日期">
-          <button id="generate-report" class="primary">Slurry Production Details / 制浆生产明细</button>
+          <button id="generate-report" class="primary">{{ 'Slitting Production Details / 分切生产明细' if department == 'slitting' else 'Slurry Production Details / 制浆生产明细' }}</button>
+          <button id="save-report-image" class="secondary" type="button" hidden>Save full report image / 保存完整报告图片</button>
         </div>
       </div>
-      <details class="report-column-picker">
+      <details class="report-column-picker" {% if department == 'slitting' %}hidden{% endif %}>
         <summary>Choose report columns / 选择报告列</summary>
         <p>Select only the information needed for this report. / 仅选择本次报告所需的信息。</p>
         <div class="report-column-groups">
@@ -94,8 +144,8 @@
           <fieldset><legend>Event details / 事件明细</legend><div id="event-report-columns" class="report-column-options"></div></fieldset>
         </div>
       </details>
-      <div id="report-sheet" class="report-sheet" hidden>
-        <div class="report-title"><div><strong>GNEM Slurry Production Details / GNEM 制浆生产明细</strong><span id="report-date-label"></span></div></div>
+      <div id="report-sheet" class="report-sheet {{ 'slitting-share-report' if department == 'slitting' else '' }}" hidden>
+        <div class="report-title"><div><strong>{{ 'GNEM Slitting Daily Report / GNEM 分切日报' if department == 'slitting' else 'GNEM Slurry Production Details / GNEM 制浆生产明细' }}</strong><span id="report-date-label"></span></div></div>
         <div class="report-grid">
           <section class="report-section production-report"><h2>Production data / 生产数据</h2><div id="report-production"></div></section>
           <section class="report-section event-report"><div class="event-report-banner"><span>每日事件明细</span><strong>Daily Event Details</strong></div><div id="report-events"></div></section>
@@ -137,6 +187,7 @@
         </div>
         <div>
           <button type="button" class="primary manager-add-record" data-record-type="production">Add production / 添加生产记录</button>
+          <button type="button" id="open-slitting-models" class="secondary" data-slitting-only hidden>Model lookup / 型号参数</button>
           <button class="secondary copy" data-copy="production-table">Copy table / 复制表格</button>
           <button class="primary refresh" data-type="production" data-target="#production-table">Refresh / 刷新</button>
         </div>
@@ -146,8 +197,24 @@
         <label>Machine / 设备<input class="history-filter" name="machine" placeholder="A1"></label>
         <button class="secondary refresh" data-type="production" data-target="#production-table">Apply filters / 应用筛选</button>
       </div>
+      <div id="slitting-production-summary"></div>
       <div id="production-table"></div>
       <div id="production-followup-panel" class="followup-panel" hidden></div>
+      <dialog id="slitting-model-dialog" class="task-dialog" data-slitting-only hidden>
+        <form id="slitting-model-form" class="form-card form-grid">
+          <div class="dialog-title"><h2>Slitting model lookup / 分切型号参数</h2><button type="button" id="close-slitting-models" class="secondary">Close / 关闭</button></div>
+          <p class="wide">These hidden values drive report calculations. Blank spreadsheet values must be completed before that model can be used. / 以下隐藏参数用于报表计算；原表为空的参数须补全后才能使用该型号。</p>
+          <label class="wide">Model / 型号<select name="existing_model"><option value="">Add new model / 添加新型号</option></select></label>
+          <label class="wide">Model code / 型号代码<input name="model_code" maxlength="100" required></label>
+          <label>Width (m) / 宽度（米）<input name="width_m" type="number" min="0.0001" step="0.0001"></label>
+          <label>Coated film length (m) / 涂覆膜长度（米）<input name="coated_length_m" type="number" min="0.01" step="0.01"></label>
+          <label>Coated film width (m) / 涂覆膜宽度（米）<input name="coated_width_m" type="number" min="0.0001" step="0.0001"></label>
+          <label>Stations / 工位数<input name="stations" type="number" min="1" step="1"></label>
+          <label>Slitting length (m) / 分切长度（米）<input name="slitting_length_m" type="number" min="0.01" step="0.01"></label>
+          <label><input name="is_active" type="checkbox" checked> Active / 启用</label>
+          <div class="wide form-actions"><button class="primary">Save model / 保存型号</button><span id="slitting-model-status" aria-live="polite"></span></div>
+        </form>
+      </dialog>
     </section>
 
     <section id="abnormality" class="view">
@@ -298,13 +365,16 @@
         <div class="wide form-actions"><button class="primary">Sign in / 登录</button><button id="manager-sign-out" class="secondary" type="button">Sign out / 退出</button><span id="manager-login-status" aria-live="polite"></span></div>
       </form>
     </dialog>
-    <dialog id="manager-workspace-dialog"><div class="dialog-head"><h2>Manager workspace / 管理员工作区</h2><button id="close-manager-workspace" class="secondary" type="button">Close / 关闭</button></div><p>Manager-only configuration tools / 仅限管理员的配置工具</p><div class="form-actions"><button id="open-display-settings" class="primary" type="button">Edit display / 编辑看板</button><button id="create-manager-backup" class="secondary" type="button">Create database backup / 创建数据库备份</button><button id="workspace-sign-out" class="secondary" type="button">Sign out / 退出</button><span id="manager-backup-status" class="manager-backup-status" aria-live="polite"></span></div></dialog>
-    <dialog id="display-settings-dialog"><div class="dialog-head"><h2>Edit factory display / 编辑工厂看板</h2><button id="close-display-settings" class="secondary" type="button">Close / 关闭</button></div><form id="display-settings-form"><section class="branding-settings"><h3>Editable headers / 可编辑标题</h3><div><label>Application title / 应用主标题<input id="display-brand-title" maxlength="160" required></label><label>Display small heading / 看板小标题<input id="display-brand-eyebrow" maxlength="160"></label><label>Display large heading / 看板大标题<input id="display-brand-display-title" maxlength="160" required></label></div></section><p>Move and resize blocks directly on this canvas. / 直接在画布上移动和调整区块大小。</p><div class="display-block-heading"><h3>Display canvas / 看板画布</h3><button id="add-permanent-text-block" class="secondary" type="button">Add permanent notice / 添加永久通知</button></div><div id="display-layout-preview" class="display-layout-preview" aria-label="Draggable and resizable display layout canvas"></div><div id="display-block-settings" class="display-settings-list" hidden></div><h3>Daily Event columns / 每日事件列</h3><div id="display-column-settings" class="display-settings-list"></div><div class="form-actions"><button class="primary">Save display / 保存看板</button><span id="display-settings-status" aria-live="polite"></span></div></form></dialog>
+    <dialog id="manager-workspace-dialog"><div class="dialog-head"><h2>Manager workspace / 管理员工作区</h2><button id="close-manager-workspace" class="secondary" type="button">Close / 关闭</button></div><p>Manager-only configuration tools / 仅限管理员的配置工具</p><form id="department-form" class="form-grid"><label>Department / 部门<select name="department"><option value="slurry" {{ 'selected' if department == 'slurry' }}>Slurry / 制浆</option><option value="slitting" {{ 'selected' if department == 'slitting' }}>Slitting / 分切</option></select></label><button class="primary">Show department / 显示部门</button></form><p><a href="/display?department={{ department }}" target="_blank">Open department display / 打开部门看板</a> · <a href="/display?department={{ department }}&amp;autoscroll=1" target="_blank">Open with auto-scroll / 自动滚动打开</a></p><div class="form-actions"><button id="open-display-settings" class="primary" type="button">Edit display / 编辑看板</button><button id="create-manager-backup" class="secondary" type="button">Create database backup / 创建数据库备份</button><button id="workspace-sign-out" class="secondary" type="button">Sign out / 退出</button><span id="manager-backup-status" class="manager-backup-status" aria-live="polite"></span></div></dialog>
+    <dialog id="display-settings-dialog"><div class="dialog-head"><h2>Edit factory display / 编辑工厂看板</h2><button id="close-display-settings" class="secondary" type="button">Close / 关闭</button></div><form id="display-settings-form"><section class="branding-settings"><h3>Editable headers / 可编辑标题</h3><div><label>Application title / 应用主标题<input id="display-brand-title" maxlength="160" required></label><label>Display small heading / 看板小标题<input id="display-brand-eyebrow" maxlength="160"></label><label>Display large heading / 看板大标题<input id="display-brand-display-title" maxlength="160" required></label></div></section><p>Move and resize blocks from 1 × 1 through 5 × 5. Permanent notices can use Heading 1 or Heading 2. / 可将区块调整为 1 × 1 至 5 × 5；永久通知可选择一级或二级标题。</p><div class="display-block-heading"><h3>Display canvas / 看板画布</h3><button id="add-permanent-text-block" class="secondary" type="button">Add permanent notice / 添加永久通知</button></div><div id="display-layout-preview" class="display-layout-preview" aria-label="Draggable and resizable display layout canvas"></div><div id="display-block-settings" class="display-settings-list" hidden></div><h3>Daily Event columns / 每日事件列</h3><div id="display-column-settings" class="display-settings-list"></div><div class="form-actions"><button class="primary">Save display / 保存看板</button><span id="display-settings-status" aria-live="polite"></span></div></form></dialog>
     <dialog id="manager-record-dialog">
       <div class="dialog-head"><h2 id="manager-record-dialog-title">Edit record / 编辑记录</h2><button id="close-manager-record-dialog" class="secondary" type="button">Close / 关闭</button></div>
       <form id="manager-record-edit" class="form-grid"><div id="manager-record-edit-fields" class="wide dynamic-fields"></div><div class="wide form-actions"><button class="primary">Save record / 保存记录</button><span id="manager-record-edit-status" aria-live="polite"></span></div></form>
     </dialog>
   </main>
-  <script src="/static/app.js"></script>
+  <script src="/static/departments.js"></script>
+  <script src="/static/app.js?v=20260908-evenrows"></script>
+  <script src="/static/slitting.js?v=20260908-evenrows"></script>
+  <script src="/static/inventory.js"></script>
 </body>
 </html>

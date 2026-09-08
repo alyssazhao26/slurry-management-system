@@ -5,6 +5,7 @@ file. Browser requests never receive credentials or the backup file itself.
 """
 
 from pathlib import Path
+from ..departments import current_department
 from subprocess import CalledProcessError, TimeoutExpired, run
 from threading import Lock
 
@@ -33,6 +34,7 @@ def run_manual_backup() -> str:
                     "Bypass",
                     "-File",
                     str(BACKUP_SCRIPT),
+                    "-Department", current_department(),
                 ],
                 cwd=PROJECT_ROOT,
                 capture_output=True,

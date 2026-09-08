@@ -36,3 +36,4 @@ def analyse_abnormality(event_type: str, severity: str, duration_minutes: int, d
     return Analysis("high" if risk == "high" else "medium", status,
                     " ".join(flags) if flags else f"{event_type} is recorded with no automatic escalation.",
                     {"event_type": event_type, "duration_minutes": duration_minutes, "flags": flags})
+

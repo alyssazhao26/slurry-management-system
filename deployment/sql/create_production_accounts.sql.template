@@ -5,6 +5,10 @@ CREATE USER IF NOT EXISTS 'slurry_web_app'@'localhost' IDENTIFIED BY 'WEB_APP_LO
 GRANT SELECT, INSERT, UPDATE ON slurry_management.* TO 'slurry_web_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE ON system_import.* TO 'slurry_web_app'@'localhost';
 
+CREATE USER IF NOT EXISTS 'slitting_web_app'@'localhost' IDENTIFIED BY 'SLITTING_WEB_APP_LONG_RANDOM_PASSWORD';
+GRANT SELECT, INSERT, UPDATE ON slitting_management.* TO 'slitting_web_app'@'localhost';
+GRANT SELECT, INSERT, UPDATE ON slitting_system_import.* TO 'slitting_web_app'@'localhost';
+
 -- Replace POWERBI_GATEWAY_IP with the one approved Power BI gateway/manager computer IP.
 CREATE USER IF NOT EXISTS 'slurry_powerbi'@'POWERBI_GATEWAY_IP' IDENTIFIED BY 'POWERBI_LONG_RANDOM_PASSWORD';
 GRANT SELECT ON system_import.* TO 'slurry_powerbi'@'POWERBI_GATEWAY_IP';
@@ -13,6 +17,8 @@ GRANT SELECT ON system_import.* TO 'slurry_powerbi'@'POWERBI_GATEWAY_IP';
 CREATE USER IF NOT EXISTS 'slurry_backup'@'localhost' IDENTIFIED BY 'BACKUP_LONG_RANDOM_PASSWORD';
 GRANT SELECT, SHOW VIEW, TRIGGER, EVENT ON slurry_management.* TO 'slurry_backup'@'localhost';
 GRANT SELECT, SHOW VIEW, TRIGGER, EVENT ON system_import.* TO 'slurry_backup'@'localhost';
+GRANT SELECT, SHOW VIEW, TRIGGER, EVENT ON slitting_management.* TO 'slurry_backup'@'localhost';
+GRANT SELECT, SHOW VIEW, TRIGGER, EVENT ON slitting_system_import.* TO 'slurry_backup'@'localhost';
 
 -- Future manager-only AI service. Create only when AI code is deployed.
 -- Replace AI_SERVICE_IP with the manager/AI computer's fixed IP.
@@ -25,6 +31,8 @@ CREATE USER IF NOT EXISTS 'slurry_migrator'@'localhost' IDENTIFIED BY 'MIGRATOR_
 GRANT CREATE ON *.* TO 'slurry_migrator'@'localhost';
 GRANT SELECT, INSERT, UPDATE, CREATE, ALTER, INDEX, REFERENCES ON slurry_management.* TO 'slurry_migrator'@'localhost';
 GRANT SELECT, INSERT, UPDATE, CREATE, ALTER, INDEX, REFERENCES ON system_import.* TO 'slurry_migrator'@'localhost';
+GRANT SELECT, INSERT, UPDATE, CREATE, ALTER, INDEX, REFERENCES ON slitting_management.* TO 'slurry_migrator'@'localhost';
+GRANT SELECT, INSERT, UPDATE, CREATE, ALTER, INDEX, REFERENCES ON slitting_system_import.* TO 'slurry_migrator'@'localhost';
 
 FLUSH PRIVILEGES;
 

@@ -24,7 +24,7 @@ const csrfReady = refreshCsrfToken().catch(() => say('Unable to establish a secu
 window.fetch = async (url, options = {}) => {
   await csrfReady;
   if (!csrfToken) await refreshCsrfToken();
-  const request = async () => { const headers = new Headers(options.headers || {}); headers.set('X-CSRF-Token', csrfToken); return rawFetch(url, {...options, headers, credentials: 'same-origin'}); };
+  const request = async () => { const headers = new Headers(options.headers || {}); headers.set('X-CSRF-Token', csrfToken); headers.set('X-Department', department); return rawFetch(url, {...options, headers, credentials: 'same-origin'}); };
   let response = await request();
   if (response.status === 403 && response.headers.get('X-Session-Refresh') === 'required') { await refreshCsrfToken(); response = await request(); }
   return response;
@@ -63,6 +63,7 @@ function show(viewId, recordHistory = true) {
   }
   document.querySelectorAll('.view').forEach(view => view.classList.remove('active'));
   document.querySelector(`#${viewId}`).classList.add('active');
+  if (viewId === 'inventory') loadInventory();
   if (viewId === 'production-records') loadRecords('production', '#production-table');
   if (viewId === 'tracker') loadRecords('tracker', '#tracker-table', true);
   if (viewId === 'ongoing') loadRecords('ongoing', '#ongoing-table');
@@ -84,13 +85,21 @@ async function loadHomeTask() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
     const items = data.daily_task?.task_items || [];
+    if (isSlitting) {
+      const statusLabels = {production_in_progress: 'Production in progress / 生产进行中', re_cut: 'Re-cut / 补切', label_changing: 'Label changing / 更换标签'};
+      const production = items.filter(item => item.type === 'slitting_production').map(item => `<li><strong>${escapeHtml(item.product_item)}</strong><span>${escapeHtml(statusLabels[item.production_status] || item.production_status)} · Target / 目标: ${escapeHtml(item.production_target)} ${escapeHtml(item.target_unit==='custom'?item.custom_unit:(item.target_unit||'sr'))}</span></li>`).join('');
+      const schedule = items.filter(item => item.type === 'slitting_schedule').map(item => `<li><strong>${escapeHtml(item.machine)} · ${escapeHtml(item.product_item)}</strong><span>Planned input / 计划排产: ${escapeHtml(item.planned_input)} · Operator / 操作员: ${escapeHtml(item.operator)} · Shift lead / 班组长: ${escapeHtml(item.shift_lead)}</span></li>`).join('');
+      document.querySelector('#home-task-details').innerHTML = `${production ? `<section class="task-group"><h3>Production overview / 生产概览</h3><ul class="task-bullets">${production}</ul></section>` : ''}${schedule ? `<section class="task-group"><h3>Schedule / 生产排程</h3><ul class="task-bullets">${schedule}</ul></section>` : ''}` || '<p>No task saved / 暂无任务</p>';
+      document.querySelector('#brand-title').textContent = 'GNEM Slitting Production / GNEM 分切生产';
+      return;
+    }
     const labels = {production: 'Production / 生产', cleaning: 'Cleaning / 清洁', custom: 'Custom / 自定义'};
     const groups = ['cleaning', 'custom', 'production'].map(type => {
       const groupItems = items.filter(item => item.type === type);
       if (!groupItems.length) return '';
       const rows = groupItems.map((item, index) => {
         const details = item.type === 'production'
-          ? `Formula / 配方: ${escapeHtml(item.formula_code)} · Amount / 数量: ${item.amount_needed ?? '—'} tanks / 罐 · Machine / 设备: ${escapeHtml(item.machine_assigned)}`
+          ? `${isSlitting?'Model / 型号':'Formula / 配方'}: ${escapeHtml(item.formula_code)} · Amount / 数量: ${item.amount_needed ?? '—'} ${isSlitting?'rolls / 卷':'tanks / 罐'} · Machine / 设备: ${escapeHtml(item.machine_assigned)}`
           : item.type === 'cleaning' ? `Process / 工艺: ${item.process_type === 'semi' ? 'Semi / 半自动' : 'Auto / 全自动'}` : escapeHtml(item.description || '—');
         const heading = item.type === 'production' ? `Production / 生产 · ${escapeHtml(item.machine_assigned || '—')}` : escapeHtml(item.description || labels[type]);
         return `<li><strong>${heading}</strong><span>${details}</span></li>`;
@@ -99,7 +108,7 @@ async function loadHomeTask() {
     }).join('');
     document.querySelector('#home-task-details').innerHTML = groups || '<p>No task saved / 暂无任务</p>';
     const branding = data.display_settings?.branding || {};
-    document.querySelector('#brand-title').textContent = branding.title || 'GNEM Slurry Production Details / GNEM 制浆生产明细';
+    document.querySelector('#brand-title').textContent = isSlitting ? 'GNEM Slitting Production / GNEM 分切生产' : branding.title || 'GNEM Slurry Production Details / GNEM 制浆生产明细';
     const obsoleteSubtitle = document.querySelector('#brand-subtitle');
     if (obsoleteSubtitle) { obsoleteSubtitle.textContent = ''; obsoleteSubtitle.hidden = true; }
   } catch {
@@ -120,7 +129,7 @@ async function loadHomeOngoing() {
     const pending = data.pending_qualifications || [];
     const formatDate = value => { const parts=String(value||'').split('-'); return parts.length===3?`${parts[1]}/${parts[2]}/${parts[0]}`:escapeHtml(value||'—'); };
     pendingRoot.innerHTML = pending.length
-      ? pending.map(record => `<article class="home-pending-item"><strong>${formatDate(record.record_date)} · ${escapeHtml(record.formula_code)}</strong><span>Qualified amount pending / 合格数量待补录</span><small>Machine / 设备: ${escapeHtml(record.machine_code)} · Batch / 批次: ${escapeHtml(record.batch_number)} · Actual / 实际: ${escapeHtml(record.actual_quantity)}</small><form class="qualified-followup-form home-qualified-followup" data-id="${Number(record.id)}"><label>Qualified quantity / 合格数量<input name="qualified_quantity" type="number" min="0" max="${Number(record.actual_quantity)}" step=".01" required placeholder="Enter amount / 输入数量"></label><button class="primary">Save follow-up / 保存补录</button></form></article>`).join('')
+      ? pending.map(record => `<article class="home-pending-item"><strong>${formatDate(record.record_date)} · ${escapeHtml(record.formula_code)}</strong><span>Qualified amount pending / 合格数量待补录</span><small>Machine / 设备: ${escapeHtml(record.machine_code)}${isSlitting?` · Actual input rolls / 实际投入卷数: ${escapeHtml(record.input_rolls)}`:` · Batch / 批次: ${escapeHtml(record.batch_number)} · Actual / 实际: ${escapeHtml(record.actual_quantity)}`}</small><form class="qualified-followup-form home-qualified-followup" data-id="${Number(record.id)}"><label>Qualified quantity / 合格数量<input name="qualified_quantity" type="number" min="0" max="${Number(record.actual_quantity)}" step=".01" required placeholder="Enter amount / 输入数量"></label><button class="primary">Save follow-up / 保存补录</button></form></article>`).join('')
       : `<p class="home-followup-empty">No pending records until ${formatDate(data.display_date)} / 截至 ${formatDate(data.display_date)} 无待补录记录</p>`;
     root.innerHTML = ongoing.length
       ? ongoing.map(event => `<article class="home-ongoing-item"><strong>${escapeHtml(event.machine_code || 'NA')} · ${escapeHtml(event.event_type)}</strong><span>Severity / Priority / 严重程度 / 优先级: ${escapeHtml(event.severity)}</span><span>Responsible person / 责任人: ${escapeHtml(event.responsible_person || 'Not set / 未设置')}</span><span>Expected finish / 预计完成: ${escapeHtml(event.target_finish_date || 'Not set / 未设置')}</span><span>Event date / 事件日期: ${escapeHtml(event.event_date)}</span><form class="ongoing-card-update home-event-close" data-id="${Number(event.id)}"><label>Actual finish date / 实际完成日期<input name="actual_finish_date" type="date" required></label><label>Solution provided / 解决方案<textarea name="solution_provided" required placeholder="Describe repair steps, changes, and verified result. / 请说明维修步骤、变更及验证结果。"></textarea></label><button class="primary">Close event / 关闭事件</button></form></article>`).join('')
@@ -228,6 +237,11 @@ async function loadCostFailureTypes(manager = false) {
 
 let managerEventTypes = [];
 async function loadEventTypes(manager = false) {
+  if (isSlitting) {
+    const response=await fetch('/api/event-types');const data=await response.json();
+    if(response.ok)managerEventTypes=data.types;
+    return;
+  }
   try {
     const response = await fetch('/api/event-types');
     const data = await response.json();
@@ -269,6 +283,7 @@ function optionMarkup(option) {
 }
 
 async function applyStandardFieldSettings(formKey) {
+  if (isSlitting) return;
   try {
     const response = await fetch(`/api/forms/${formKey}/standard-fields`);
     const data = await response.json();
@@ -400,6 +415,7 @@ function recordFilters(type) {
 }
 
 async function loadRecords(type, target = recordTargets[type], tracker = false, page = 1) {
+  if (isSlitting && type === "production") return loadSlittingProduction();
   try {
     const query = new URLSearchParams({page, page_size: 50, ...recordFilters(type)});
     [...query.entries()].forEach(([key, value]) => { if (!value) query.delete(key); });
@@ -471,11 +487,67 @@ async function loadDailyReport() {
     document.querySelector('#report-date-label').textContent = `Report date / 报告日期: ${data.report_date}`;
     const productionColumns = selectedReportColumns('production'), eventColumns = selectedReportColumns('events');
     if (!productionColumns.length || !eventColumns.length) { say('Select at least one Production column and one Event column. / 生产数据和事件明细请各选择至少一列。'); return; }
-    renderReportTable('#report-production', data.production, productionColumns);
-    renderReportTable('#report-events', data.events, eventColumns);
+    if (isSlitting) await loadSlittingDailyReport(data.events, dateInput.value);
+    else renderReportTable('#report-production', data.production, productionColumns);
+    if (!isSlitting) renderReportTable('#report-events', data.events, eventColumns);
     document.querySelector('#report-sheet').hidden = false;
+    document.querySelector('#save-report-image').hidden = false;
   } catch {
     say('Could not generate report. Check server setup and pending migrations. / 无法生成报告，请检查服务器设置和待处理迁移。');
+  }
+}
+
+async function saveReportImage() {
+  const report = document.querySelector('#report-sheet');
+  if (report.hidden) { say('Generate the report first. / 请先生成报告。'); return; }
+  const button = document.querySelector('#save-report-image');
+  const previousText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Preparing image… / 正在生成图片…';
+  report.classList.add('capturing-report');
+  try {
+    if (isSlitting && typeof saveSlittingReportImage === 'function') {
+      await saveSlittingReportImage();
+      say('Full report image saved. / 完整报告图片已保存。');
+      return;
+    }
+    await document.fonts.ready;
+    const width = 1440;
+    const height = Math.ceil(report.scrollHeight * (width / report.scrollWidth));
+    if (height > 30000) throw new Error('Report is too long for one image.');
+    const clone = report.cloneNode(true);
+    clone.removeAttribute('hidden');
+    clone.style.width = `${report.scrollWidth}px`;
+    clone.style.margin = '0';
+    const css = [...document.styleSheets].map(sheet => {
+      try { return [...sheet.cssRules].map(rule => rule.cssText).join('\n'); }
+      catch { return ''; }
+    }).join('\n');
+    const html = `<div xmlns="http://www.w3.org/1999/xhtml"><style>${css}</style>${clone.outerHTML}</div>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${report.scrollWidth}" height="${report.scrollHeight}"><foreignObject width="100%" height="100%">${html}</foreignObject></svg>`;
+    const source = URL.createObjectURL(new Blob([svg], {type: 'image/svg+xml;charset=utf-8'}));
+    const image = new Image();
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = source; });
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff'; context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    URL.revokeObjectURL(source);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Image conversion failed.');
+    const download = document.createElement('a');
+    download.href = URL.createObjectURL(blob);
+    download.download = `GNEM-${department}-${document.querySelector('#report-date').value}-daily-report.png`;
+    download.click();
+    setTimeout(() => URL.revokeObjectURL(download.href), 1000);
+    say('Full report image saved. / 完整报告图片已保存。');
+  } catch (error) {
+    say(`${error.message || 'Could not save the report image.'} / 无法保存报告图片。`);
+  } finally {
+    report.classList.remove('capturing-report');
+    button.disabled = false;
+    button.textContent = previousText;
   }
 }
 
@@ -502,7 +574,7 @@ function formPayload(form) {
   Object.entries(all).forEach(([key, value]) => { if (!fixed.includes(key)) custom_fields[key] = value; });
   const costFailureTypes = [...form.querySelectorAll('[name="cost_failure_types"]:checked')]
     .map(option => option.value);
-  return {...all, cost_failure_types: costFailureTypes, custom_fields};
+  return {...all, department, cost_failure_types: costFailureTypes, custom_fields};
 }
 async function submitRecord(form, path) {
   const submitButton = form.querySelector('button[type="submit"], button:not([type])');
@@ -510,12 +582,12 @@ async function submitRecord(form, path) {
   try {
     const payload = formPayload(form);
     if (!payload) { say('Enter a valid 24-hour event time: HH:MM - HH:MM. / 请输入有效的24小时事件时间。'); return; }
-    sessionStorage.setItem(`gnem-draft:${form.id}`, JSON.stringify(payload));
+    sessionStorage.setItem(`gnem-draft:${department}:${form.id}`, JSON.stringify(payload));
     if (submitButton) { submitButton.disabled = true; submitButton.dataset.originalText = submitButton.textContent; submitButton.textContent = 'Saving… / 正在保存…'; }
     const response = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
     const data = await response.json();
     if (!response.ok) { say(data.error || 'Record was not saved.'); return; }
-    sessionStorage.removeItem(`gnem-draft:${form.id}`); form.reset();
+    sessionStorage.removeItem(`gnem-draft:${department}:${form.id}`); form.reset();
     say(`${data.message} It is now available in the record history.`);
   } catch { say('Cannot reach the factory server. Your draft remains in this tab; submit again when the connection returns.'); }
   finally { if (submitButton) { submitButton.disabled = false; submitButton.textContent = submitButton.dataset.originalText || 'Save'; } }
@@ -664,37 +736,48 @@ document.addEventListener('submit', async event => {
   } catch { say('Could not reach the factory server.'); }
 });
 document.querySelector('#generate-report').addEventListener('click', loadDailyReport);
+document.querySelector('#save-report-image').addEventListener('click', saveReportImage);
 document.querySelectorAll('.copy').forEach(button => button.addEventListener('click', async () => {
   const table = document.querySelector(`#${button.dataset.copy} table`);
   if (!table) { say('Load records first, then copy the table.'); return; }
-  try { await navigator.clipboard.writeText(table.innerText); say('Table copied. You can paste it into Excel or another approved tool.'); }
+  try { await navigator.clipboard.writeText((isSlitting ? document.querySelector(`#${button.dataset.copy}`).innerText : table.innerText)); say('Table copied. You can paste it into Excel or another approved tool.'); }
   catch { say('Clipboard access was blocked by this browser. Select the table and copy it manually.'); }
 }));
 
-const taskMachineOptions = ['J1','J2','J3','J4','J5','J6','J7','J8','J9','J10-1','J10-2','J10-3','J10-4','J10-5'];
+const taskMachineOptions = isSlitting ? ['FJ2','FJ3','FJ4','FJ5','FJ6','FX1','FX2','FX3','FX4','FX5','FX6','FX7','FX8'] : ['J1','J2','J3','J4','J5','J6','J7','J8','J9','J10-1','J10-2','J10-3','J10-4','J10-5'];
+const slittingProductOptions = ['513MM','514.9MM','515.6MM','547MM','242MM','515.4MM','270.6MM','270MM','88.8MM','67.1MM','73.8MM','96MM','264.5MM','269.8MM','61MM','73.7MM','196MM','557.20MM','62.3MM','61.1MM','61.6MM','93.7MM','73.5MM'];
+const slittingStatusOptions = [['production_in_progress','Production in progress / 生产进行中'],['re_cut','Re-cut / 补切'],['label_changing','Label changing / 更换标签']];
+const selectedOptionMarkup = (options, selected, placeholder) => `<option value="">${placeholder}</option>${options.map(option => { const value=Array.isArray(option)?option[0]:option,label=Array.isArray(option)?option[1]:option; return `<option value="${escapeHtml(value)}" ${selected===value?'selected':''}>${escapeHtml(label)}</option>`; }).join('')}`;
 function homeTaskItemMarkup(item = {type: 'cleaning'}) {
+  if (isSlitting) {
+    if (item.type === 'slitting_schedule') return `<article class="task-item slitting-schedule-item"><div class="task-item-head"><strong>Schedule row / 排程行</strong><button type="button" class="secondary remove-task-item">Remove / 删除</button></div><label>Machine / 机台<select class="slitting-schedule-machine" required>${selectedOptionMarkup(taskMachineOptions,item.machine,'Select machine / 选择机台')}</select></label><label>Product / 项目<select class="slitting-schedule-product" required>${selectedOptionMarkup(slittingProductOptions,String(item.product_item||'').replaceAll(' ','').toUpperCase(),'Select product / 选择项目')}</select></label><label>Planned input / 计划排产<input class="slitting-planned-input" maxlength="120" required value="${escapeHtml(item.planned_input||'')}"></label><label>Operator / 操作员<input class="slitting-operator" maxlength="120" required value="${escapeHtml(item.operator||'')}"></label><label>Shift lead / 班组长<input class="slitting-shift-lead" maxlength="120" required value="${escapeHtml(item.shift_lead||'')}"></label></article>`;
+    const selectedProduct=String(item.product_item||'').replaceAll(' ','').toUpperCase(),targetUnit=item.target_unit||'sr';
+    return `<article class="task-item slitting-production-item"><div class="task-item-head"><strong>Production item / 生产项目</strong><button type="button" class="secondary remove-task-item">Remove / 删除</button></div><label>Production item / 生产项目<select class="slitting-product-item" required>${selectedOptionMarkup(slittingProductOptions,selectedProduct,'Select product / 选择项目')}</select></label><label>Production status / 生产状态<select class="slitting-production-status" required>${selectedOptionMarkup(slittingStatusOptions,item.production_status,'Select status / 选择状态')}</select></label><label>Production target / 生产目标<input class="slitting-production-target" type="number" min="0.01" max="1000000" step="0.01" required value="${item.production_target??''}"><small>Specify the target unit below. / 请在下方注明目标单位。</small></label><label>Target unit / 目标单位<select class="slitting-target-unit" required>${selectedOptionMarkup([['sr','sr'],['MR','MR'],['custom','Custom / 自定义']],targetUnit,'Select unit / 选择单位')}</select></label><label class="slitting-custom-unit" ${targetUnit==='custom'?'':'hidden'}>Custom unit / 自定义单位<input maxlength="30" value="${escapeHtml(item.custom_unit||'')}"></label></article>`;
+  }
   const standardFormula = ['K1-26', 'B1-1', 'E3'].includes(item.formula_code) ? item.formula_code : (item.formula_code ? 'CUSTOM' : '');
   const machines = taskMachineOptions.map(machine => `<option ${item.machine_assigned === machine ? 'selected' : ''}>${machine}</option>`).join('');
   return `<article class="task-item"><div class="task-item-head"><strong>Task item / 任务项</strong><button type="button" class="secondary remove-task-item">Remove / 删除</button></div>
     <label>Task type / 任务类型<select class="task-item-type"><option value="cleaning" ${item.type === 'cleaning' ? 'selected' : ''}>Cleaning / 清洁</option><option value="custom" ${item.type === 'custom' ? 'selected' : ''}>Custom / 自定义</option><option value="production" ${item.type === 'production' ? 'selected' : ''}>Production / 生产</option></select></label>
     <label class="task-item-description">Task name / 任务名称<input class="task-item-description-input" maxlength="255" value="${escapeHtml(item.description || '')}" placeholder="Describe this task / 填写任务名称"></label>
     <label class="task-cleaning-process" hidden>Cleaning process / 清洁类型<select class="task-item-process"><option value="">Select type / 选择类型</option><option value="semi" ${item.process_type === 'semi' ? 'selected' : ''}>Semi / 半自动</option><option value="auto" ${item.process_type === 'auto' ? 'selected' : ''}>Auto / 全自动</option></select></label>
-    <div class="task-production-fields"><label>Formula / 配方<select class="task-item-formula"><option value="">Select formula / 选择配方</option><option ${standardFormula === 'K1-26' ? 'selected' : ''}>K1-26</option><option ${standardFormula === 'B1-1' ? 'selected' : ''}>B1-1</option><option ${standardFormula === 'E3' ? 'selected' : ''}>E3</option><option value="CUSTOM" ${standardFormula === 'CUSTOM' ? 'selected' : ''}>Custom / 自定义</option></select></label><label class="task-item-custom-formula" hidden>Custom formula / 自定义配方<input maxlength="50" value="${standardFormula === 'CUSTOM' ? escapeHtml(item.formula_code) : ''}"></label><label>Amount needed / 所需数量（罐）<input class="task-item-amount" type="number" min="0" step="0.01" value="${item.amount_needed ?? ''}" placeholder="0.00"></label><label>Machine assigned / 分配设备<select class="task-item-machine"><option value="">Select machine / 选择设备</option>${machines}</select></label></div>
+    <div class="task-production-fields"><label>Formula / 配方<select class="task-item-formula"><option value="">Select formula / 选择配方</option><option ${standardFormula === 'K1-26' ? 'selected' : ''}>K1-26</option><option ${standardFormula === 'B1-1' ? 'selected' : ''}>B1-1</option><option ${standardFormula === 'E3' ? 'selected' : ''}>E3</option><option value="CUSTOM" ${standardFormula === 'CUSTOM' ? 'selected' : ''}>Custom / 自定义</option></select></label><label class="task-item-custom-formula" hidden>Custom formula / 自定义配方<input maxlength="50" value="${standardFormula === 'CUSTOM' ? escapeHtml(item.formula_code) : ''}"></label><label>${isSlitting?'Rolls needed / 所需卷数':'Amount needed / 所需数量（罐）'}<input class="task-item-amount" type="number" min="0" step="0.01" value="${item.amount_needed ?? ''}" placeholder="0.00"></label><label>Machine assigned / 分配设备<select class="task-item-machine"><option value="">Select machine / 选择设备</option>${machines}</select></label></div>
   </article>`;
 }
 function syncHomeTaskItem(item) {
+  if (isSlitting) return;
   const type = item.querySelector('.task-item-type').value;
   item.querySelector('.task-production-fields').hidden = type !== 'production';
   item.querySelector('.task-item-description').hidden = type === 'production';
   item.querySelector('.task-cleaning-process').hidden = type !== 'cleaning';
   item.querySelector('.task-item-custom-formula').hidden = type !== 'production' || item.querySelector('.task-item-formula').value !== 'CUSTOM';
 }
-function refreshHomeTaskItems() { document.querySelectorAll('.task-item').forEach(syncHomeTaskItem); }
+function refreshHomeTaskItems() { document.querySelectorAll('.task-item').forEach(item=>{syncHomeTaskItem(item);const unit=item.querySelector('.slitting-target-unit');if(unit){const custom=item.querySelector('.slitting-custom-unit');custom.hidden=unit.value!=='custom';custom.querySelector('input').required=unit.value==='custom';}}); }
 async function fillHomeTaskEditor() {
   const response = await fetch('/api/public-display'); const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Could not load today’s task.');
   const items = data.daily_task?.task_items || []; const root = document.querySelector('#home-task-items');
-  root.innerHTML = (items.length ? items : [{type: 'cleaning'}]).map(homeTaskItemMarkup).join('');
+  root.innerHTML = (items.length ? items : (isSlitting ? [{type:'slitting_production'},{type:'slitting_schedule'}] : [{type: 'cleaning'}])).map(homeTaskItemMarkup).join('');
+  document.querySelector('#home-task-editor-help').textContent = isSlitting ? 'Set today’s production items and targets, then add the machine schedule below. Actual progress is calculated from qualified Slitting production records. / 设置今日生产项目及目标，并在下方添加机台排程；实际进度按合格分切记录计算。' : 'Add one item per task. Each production item has its own formula, tanks, and assigned machine. / 每项任务单独添加；每个生产任务可设置独立配方、罐数和设备。';
   document.querySelector('#home-reminders').value = (data.daily_task?.reminders || []).join('\n');
   refreshHomeTaskItems();
 }
@@ -704,12 +787,13 @@ document.querySelector('#edit-home-task').addEventListener('click', async () => 
   catch (error) { say(error.message); }
 });
 document.querySelector('#close-home-task').addEventListener('click', () => document.querySelector('#home-task-dialog').close());
-document.querySelector('#add-home-task-item').addEventListener('click', () => { document.querySelector('#home-task-items').insertAdjacentHTML('beforeend', homeTaskItemMarkup()); refreshHomeTaskItems(); });
+document.querySelector('#add-home-task-item').addEventListener('click', () => { document.querySelector('#home-task-items').insertAdjacentHTML('beforeend', homeTaskItemMarkup(isSlitting?{type:'slitting_production'}:undefined)); refreshHomeTaskItems(); });
+document.querySelector('#add-home-schedule-item').addEventListener('click', () => { document.querySelector('#home-task-items').insertAdjacentHTML('beforeend', homeTaskItemMarkup({type:'slitting_schedule'})); });
 document.querySelector('#home-task-items').addEventListener('change', refreshHomeTaskItems);
 document.querySelector('#home-task-items').addEventListener('click', event => { if (event.target.classList.contains('remove-task-item')) { event.target.closest('.task-item').remove(); } });
 document.querySelector('#home-daily-task-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const taskItems = [...document.querySelectorAll('.task-item')].map(item => { const formula = item.querySelector('.task-item-formula').value === 'CUSTOM' ? item.querySelector('.task-item-custom-formula input').value : item.querySelector('.task-item-formula').value; return {type: item.querySelector('.task-item-type').value, description: item.querySelector('.task-item-description-input').value, process_type: item.querySelector('.task-item-process').value, formula_code: formula, amount_needed: item.querySelector('.task-item-amount').value, machine_assigned: item.querySelector('.task-item-machine').value}; });
+  const taskItems = [...document.querySelectorAll('.task-item')].map(item => { if(isSlitting){if(item.classList.contains('slitting-schedule-item'))return {type:'slitting_schedule',machine:item.querySelector('.slitting-schedule-machine').value,product_item:item.querySelector('.slitting-schedule-product').value,planned_input:item.querySelector('.slitting-planned-input').value,operator:item.querySelector('.slitting-operator').value,shift_lead:item.querySelector('.slitting-shift-lead').value};return {type:'slitting_production',product_item:item.querySelector('.slitting-product-item').value,production_status:item.querySelector('.slitting-production-status').value,production_target:item.querySelector('.slitting-production-target').value,target_unit:item.querySelector('.slitting-target-unit').value,custom_unit:item.querySelector('.slitting-custom-unit input').value};} const formula = item.querySelector('.task-item-formula').value === 'CUSTOM' ? item.querySelector('.task-item-custom-formula input').value : item.querySelector('.task-item-formula').value; return {type: item.querySelector('.task-item-type').value, description: item.querySelector('.task-item-description-input').value, process_type: item.querySelector('.task-item-process').value, formula_code: formula, amount_needed: item.querySelector('.task-item-amount').value, machine_assigned: item.querySelector('.task-item-machine').value}; });
   const reminders = document.querySelector('#home-reminders').value.split('\n').map(value => value.trim()).filter(Boolean);
   const payload = {task_items: taskItems, reminders};
   const response = await fetch('/api/daily-task', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
@@ -860,8 +944,7 @@ document.querySelector('#field-form').addEventListener('submit', async event => 
   if (response.ok) { loadManagerFields(payload.form_key); }
 });
 
-loadHomeTask();
-loadHomeOngoing();
+window.addEventListener("DOMContentLoaded", () => { loadHomeTask(); loadHomeOngoing(); });
 
 let managerRecordContext = null;
 const managerEditableFields = {
@@ -895,6 +978,7 @@ function managerEditControl(key, label, kind, value) {
 }
 
 function openManagerRecordDialog(type, record = null) {
+  if (isSlitting) return openSlittingEditor(type, record);
   managerRecordContext = {type, id: record?.id || null};
   const isNew = !record;
   document.querySelector('#manager-record-dialog-title').textContent = `${isNew ? 'Add' : 'Edit'} ${type === 'production' ? 'production' : 'event'} record / ${isNew ? '添加' : '编辑'}${type === 'production' ? '生产' : '事件'}记录`;
@@ -940,12 +1024,12 @@ document.querySelector('#open-manager-fields').addEventListener('click', async (
   document.querySelector('#manager-fields-dialog').showModal();
 });
 document.querySelector('#close-manager-fields').addEventListener('click', () => document.querySelector('#manager-fields-dialog').close());
-function displaySettingMarkup(item,kind){const label=kind==='blocks'?'Title / 标题':'Column title / 列标题';const width=kind==='blocks'?`<input data-setting-width type="hidden" value="${Number(item.width)||1}"><input data-setting-height type="hidden" value="${Number(item.height)||1}"><input data-setting-font-size type="hidden" value="${Math.max(12,Math.min(Number(item.font_size)||16,36))}">`:'<span></span>';const custom=item.type==='static_text'?`<textarea data-setting-content maxlength="4000">${escapeHtml(item.content||'')}</textarea>`:'';return `<div class="display-setting-row" data-setting-key="${escapeHtml(item.key)}" data-setting-type="${escapeHtml(item.type||'built_in')}"><input data-setting-label value="${escapeHtml(item.title||item.label)}" maxlength="160" required><input data-setting-order type="number" min="0" max="999" value="${Number(item.order)}" required>${width}<input data-setting-visible type="checkbox" ${item.visible?'checked':''}>${custom}</div>`}
+function displaySettingMarkup(item,kind){const label=kind==='blocks'?'Title / 标题':'Column title / 列标题';const width=kind==='blocks'?`<input data-setting-width type="hidden" value="${Number(item.width)||1}"><input data-setting-height type="hidden" value="${Number(item.height)||1}"><input data-setting-font-size type="hidden" value="${Math.max(12,Math.min(Number(item.font_size)||16,36))}">`:'<span></span>';const custom=item.type==='static_text'?`<input data-setting-heading-level type="hidden" value="${item.heading_level==='h1'?'h1':'h2'}"><textarea data-setting-content maxlength="4000">${escapeHtml(item.content||'')}</textarea>`:'';return `<div class="display-setting-row" data-setting-key="${escapeHtml(item.key)}" data-setting-type="${escapeHtml(item.type||'built_in')}"><input data-setting-label value="${escapeHtml(item.title||item.label)}" maxlength="160" required><input data-setting-order type="number" min="0" max="999" value="${Number(item.order)}" required>${width}<input data-setting-visible type="checkbox" ${item.visible?'checked':''}>${custom}</div>`}
 async function openDisplaySettings(){const response=await fetch('/api/manager/display-settings');const data=await response.json();if(!response.ok){say(data.error||'Unlock manager access before editing the display.');return}const branding=data.settings.branding||{};document.querySelector('#display-brand-title').value=branding.title||'';document.querySelector('#display-brand-eyebrow').value=branding.display_eyebrow||branding.title||'';document.querySelector('#display-brand-display-title').value=branding.display_title||'Daily Factory Display / 每日工厂看板';document.querySelector('#display-block-settings').innerHTML=data.settings.blocks.sort((a,b)=>a.order-b.order).map(x=>displaySettingMarkup(x,'blocks')).join('');document.querySelector('#display-column-settings').innerHTML=data.settings.event_columns.map(x=>displaySettingMarkup(x,'event_columns')).join('');renderDisplayLayoutPreview();document.querySelector('#display-settings-dialog').showModal()}
-function renderDisplayLayoutPreview(){const root=document.querySelector('#display-layout-preview');const rows=[...document.querySelectorAll('#display-block-settings .display-setting-row')];root.innerHTML=rows.map(row=>{const title=row.querySelector('[data-setting-label]').value;const width=Number(row.querySelector('[data-setting-width]').value)||1;const height=Number(row.querySelector('[data-setting-height]').value)||1;const fontSize=Number(row.querySelector('[data-setting-font-size]').value)||16;const visible=row.querySelector('[data-setting-visible]').checked;const content=row.querySelector('[data-setting-content]')?.value||'';const removable=row.dataset.settingType==='static_text';return `<article class="display-preview-block preview-width-${width} preview-height-${height} ${visible?'':'is-hidden'}" style="--preview-font-size:${fontSize}px" data-setting-key="${escapeHtml(row.dataset.settingKey)}"><div class="display-preview-toolbar"><button class="display-move-handle" type="button" draggable="true" title="Drag to move / 拖动移动">⠿ Move / 移动</button><label class="preview-font-label">Font / 字号 <select class="preview-font-size" aria-label="Block font size">${[12,14,16,18,20,24,28,32,36].map(size=>`<option value="${size}" ${size===fontSize?'selected':''}>${size}px</option>`).join('')}</select></label><label><input class="preview-visible" type="checkbox" ${visible?'checked':''}> Show / 显示</label>${removable?'<button class="remove-display-block" type="button">Remove / 删除</button>':''}</div><input class="preview-title" value="${escapeHtml(title)}" maxlength="160" aria-label="Block title">${removable?`<textarea class="preview-content" maxlength="4000" aria-label="Permanent text" placeholder="One item per line. Use - for bullets or 1. for numbered lists. / 每行一项；使用 - 创建项目符号，使用 1. 创建编号列表。">${escapeHtml(content)}</textarea>`:''}<small class="preview-size">${width} × ${height}</small><button class="display-resize-handle" type="button" aria-label="Resize block / 调整区块大小" title="Drag to resize / 拖动调整大小">↘</button></article>`}).join('')}
+function renderDisplayLayoutPreview(){const root=document.querySelector('#display-layout-preview');const rows=[...document.querySelectorAll('#display-block-settings .display-setting-row')];root.innerHTML=rows.map(row=>{const title=row.querySelector('[data-setting-label]').value;const width=Number(row.querySelector('[data-setting-width]').value)||1;const height=Number(row.querySelector('[data-setting-height]').value)||1;const fontSize=Number(row.querySelector('[data-setting-font-size]').value)||16;const visible=row.querySelector('[data-setting-visible]').checked;const content=row.querySelector('[data-setting-content]')?.value||'';const removable=row.dataset.settingType==='static_text';const headingLevel=row.querySelector('[data-setting-heading-level]')?.value||'h2';return `<article class="display-preview-block preview-width-${width} preview-height-${height} ${visible?'':'is-hidden'}" style="--preview-font-size:${fontSize}px" data-setting-key="${escapeHtml(row.dataset.settingKey)}"><div class="display-preview-toolbar"><button class="display-move-handle" type="button" draggable="true" title="Drag to move / 拖动移动">⠿ Move / 移动</button><label class="preview-font-label">Font / 字号 <select class="preview-font-size" aria-label="Block font size">${[12,14,16,18,20,24,28,32,36].map(size=>`<option value="${size}" ${size===fontSize?'selected':''}>${size}px</option>`).join('')}</select></label>${removable?`<label>Header / 标题 <select class="preview-heading-level"><option value="h1" ${headingLevel==='h1'?'selected':''}>Heading 1</option><option value="h2" ${headingLevel==='h2'?'selected':''}>Heading 2</option></select></label>`:''}<label><input class="preview-visible" type="checkbox" ${visible?'checked':''}> Show / 显示</label>${removable?'<button class="remove-display-block" type="button">Remove / 删除</button>':''}</div><input class="preview-title preview-${headingLevel}" value="${escapeHtml(title)}" maxlength="160" aria-label="Block title">${removable?`<textarea class="preview-content" maxlength="4000" aria-label="Permanent text" placeholder="One item per line. Use - for bullets or 1. for numbered lists. / 每行一项；使用 - 创建项目符号，使用 1. 创建编号列表。">${escapeHtml(content)}</textarea>`:''}<small class="preview-size">${width} × ${height}</small><button class="display-resize-handle" type="button" aria-label="Resize block / 调整区块大小" title="Drag to resize / 拖动调整大小">↘</button></article>`}).join('')}
 function settingRowForCard(card){return document.querySelector(`#display-block-settings [data-setting-key="${CSS.escape(card.dataset.settingKey)}"]`)}
 function syncBlockOrderFromPreview(){const settings=document.querySelector('#display-block-settings');[...document.querySelectorAll('#display-layout-preview .display-preview-block')].forEach((card,index)=>{const row=settingRowForCard(card);settings.append(row);row.querySelector('[data-setting-order]').value=(index+1)*10})}
-function syncCanvasCard(card){const row=settingRowForCard(card);row.querySelector('[data-setting-label]').value=card.querySelector('.preview-title').value;row.querySelector('[data-setting-visible]').checked=card.querySelector('.preview-visible').checked;const fontSize=Number(card.querySelector('.preview-font-size').value)||16;row.querySelector('[data-setting-font-size]').value=fontSize;card.style.setProperty('--preview-font-size',`${fontSize}px`);const content=row.querySelector('[data-setting-content]');if(content)content.value=card.querySelector('.preview-content').value}
+function syncCanvasCard(card){const row=settingRowForCard(card);row.querySelector('[data-setting-label]').value=card.querySelector('.preview-title').value;row.querySelector('[data-setting-visible]').checked=card.querySelector('.preview-visible').checked;const fontSize=Number(card.querySelector('.preview-font-size').value)||16;row.querySelector('[data-setting-font-size]').value=fontSize;card.style.setProperty('--preview-font-size',`${fontSize}px`);const heading=row.querySelector('[data-setting-heading-level]');if(heading){heading.value=card.querySelector('.preview-heading-level').value;card.querySelector('.preview-title').className=`preview-title preview-${heading.value}`}const content=row.querySelector('[data-setting-content]');if(content)content.value=card.querySelector('.preview-content').value}
 let draggedDisplayBlock=null;
 document.querySelector('#display-layout-preview').addEventListener('dragstart',event=>{if(!event.target.classList.contains('display-move-handle')){event.preventDefault();return}draggedDisplayBlock=event.target.closest('.display-preview-block');draggedDisplayBlock.classList.add('dragging');event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',draggedDisplayBlock.dataset.settingKey)});
 document.querySelector('#display-layout-preview').addEventListener('dragover',event=>{event.preventDefault();if(!draggedDisplayBlock)return;const target=event.target.closest('.display-preview-block');if(!target||target===draggedDisplayBlock)return;const box=target.getBoundingClientRect();const after=event.clientY>box.top+box.height/2||(Math.abs(event.clientY-(box.top+box.height/2))<box.height/3&&event.clientX>box.left+box.width/2);target.parentElement.insertBefore(draggedDisplayBlock,after?target.nextSibling:target)});
@@ -953,11 +1037,11 @@ document.querySelector('#display-layout-preview').addEventListener('drop',event=
 document.querySelector('#display-layout-preview').addEventListener('dragend',()=>{if(draggedDisplayBlock)draggedDisplayBlock.classList.remove('dragging');draggedDisplayBlock=null});
 let resizeState=null;
 document.querySelector('#display-layout-preview').addEventListener('pointerdown',event=>{if(!event.target.classList.contains('display-resize-handle'))return;event.preventDefault();const card=event.target.closest('.display-preview-block');const row=settingRowForCard(card);resizeState={card,row,startX:event.clientX,startY:event.clientY,startWidth:card.getBoundingClientRect().width,startHeight:card.getBoundingClientRect().height};event.target.setPointerCapture?.(event.pointerId)});
-document.querySelector('#display-layout-preview').addEventListener('pointermove',event=>{if(!resizeState)return;const canvas=document.querySelector('#display-layout-preview');const gap=12,col=(canvas.clientWidth-28-gap*2)/3;const width=Math.max(1,Math.min(3,Math.round((resizeState.startWidth+event.clientX-resizeState.startX+gap)/(col+gap))));const height=Math.max(1,Math.min(3,Math.round((resizeState.startHeight+event.clientY-resizeState.startY+gap)/(140+gap))));for(let size=1;size<=3;size++){resizeState.card.classList.toggle(`preview-width-${size}`,size===width);resizeState.card.classList.toggle(`preview-height-${size}`,size===height)}resizeState.row.querySelector('[data-setting-width]').value=width;resizeState.row.querySelector('[data-setting-height]').value=height;resizeState.card.querySelector('.preview-size').textContent=`${width} × ${height}`});
+document.querySelector('#display-layout-preview').addEventListener('pointermove',event=>{if(!resizeState)return;const canvas=document.querySelector('#display-layout-preview');const gap=12,col=(canvas.clientWidth-28-gap*4)/5;const width=Math.max(1,Math.min(5,Math.round((resizeState.startWidth+event.clientX-resizeState.startX+gap)/(col+gap))));const height=Math.max(1,Math.min(5,Math.round((resizeState.startHeight+event.clientY-resizeState.startY+gap)/(140+gap))));for(let size=1;size<=5;size++){resizeState.card.classList.toggle(`preview-width-${size}`,size===width);resizeState.card.classList.toggle(`preview-height-${size}`,size===height)}resizeState.row.querySelector('[data-setting-width]').value=width;resizeState.row.querySelector('[data-setting-height]').value=height;resizeState.card.querySelector('.preview-size').textContent=`${width} × ${height}`});
 document.querySelector('#display-layout-preview').addEventListener('pointerup',()=>{resizeState=null});
 document.querySelector('#display-layout-preview').addEventListener('input',event=>{const card=event.target.closest('.display-preview-block');if(card)syncCanvasCard(card)});
 document.querySelector('#display-layout-preview').addEventListener('change',event=>{const card=event.target.closest('.display-preview-block');if(card){syncCanvasCard(card);card.classList.toggle('is-hidden',!card.querySelector('.preview-visible').checked)}});
-function collectDisplaySettings(root,kind){return [...root.querySelectorAll('.display-setting-row')].map(row=>({key:row.dataset.settingKey,[kind==='blocks'?'title':'label']:row.querySelector('[data-setting-label]').value,order:Number(row.querySelector('[data-setting-order]').value),visible:row.querySelector('[data-setting-visible]').checked,...(kind==='blocks'?{width:Number(row.querySelector('[data-setting-width]').value),height:Number(row.querySelector('[data-setting-height]').value),font_size:Number(row.querySelector('[data-setting-font-size]').value),type:row.dataset.settingType,content:row.querySelector('[data-setting-content]')?.value||''}:{})}))}
-document.querySelector('#add-permanent-text-block').addEventListener('click',()=>{const key=`text_${crypto.randomUUID()}`;const root=document.querySelector('#display-block-settings');root.insertAdjacentHTML('beforeend',displaySettingMarkup({key,type:'static_text',title:'Permanent tasks / 永久任务',content:'',visible:true,order:(root.children.length+1)*10,width:3,height:1,font_size:16},'blocks'));renderDisplayLayoutPreview();document.querySelector('#display-layout-preview .display-preview-block:last-child')?.scrollIntoView({behavior:'smooth',block:'center'})});
+function collectDisplaySettings(root,kind){return [...root.querySelectorAll('.display-setting-row')].map(row=>({key:row.dataset.settingKey,[kind==='blocks'?'title':'label']:row.querySelector('[data-setting-label]').value,order:Number(row.querySelector('[data-setting-order]').value),visible:row.querySelector('[data-setting-visible]').checked,...(kind==='blocks'?{width:Number(row.querySelector('[data-setting-width]').value),height:Number(row.querySelector('[data-setting-height]').value),font_size:Number(row.querySelector('[data-setting-font-size]').value),type:row.dataset.settingType,content:row.querySelector('[data-setting-content]')?.value||'',heading_level:row.querySelector('[data-setting-heading-level]')?.value||'h2'}:{})}))}
+document.querySelector('#add-permanent-text-block').addEventListener('click',()=>{const key=`text_${crypto.randomUUID()}`;const root=document.querySelector('#display-block-settings');root.insertAdjacentHTML('beforeend',displaySettingMarkup({key,type:'static_text',title:'Permanent tasks / 永久任务',content:'',heading_level:'h2',visible:true,order:(root.children.length+1)*10,width:5,height:1,font_size:16},'blocks'));renderDisplayLayoutPreview();document.querySelector('#display-layout-preview .display-preview-block:last-child')?.scrollIntoView({behavior:'smooth',block:'center'})});
 document.querySelector('#display-layout-preview').addEventListener('click',event=>{if(!event.target.classList.contains('remove-display-block'))return;const card=event.target.closest('.display-preview-block');settingRowForCard(card).remove();card.remove();syncBlockOrderFromPreview()});
 document.querySelector('#open-display-settings').addEventListener('click',openDisplaySettings);document.querySelector('#close-display-settings').addEventListener('click',()=>document.querySelector('#display-settings-dialog').close());document.querySelector('#display-settings-form').addEventListener('submit',async event=>{event.preventDefault();const payload={branding:{title:document.querySelector('#display-brand-title').value,subtitle:'',display_eyebrow:document.querySelector('#display-brand-eyebrow').value,display_title:document.querySelector('#display-brand-display-title').value},blocks:collectDisplaySettings(document.querySelector('#display-block-settings'),'blocks'),event_columns:collectDisplaySettings(document.querySelector('#display-column-settings'),'event_columns')};const response=await fetch('/api/manager/display-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json();document.querySelector('#display-settings-status').textContent=response.ok?'Display settings saved. / 看板设置已保存。':(data.error||'Could not save display settings.');if(response.ok)document.querySelector('#brand-title').textContent=data.settings.branding.title});
