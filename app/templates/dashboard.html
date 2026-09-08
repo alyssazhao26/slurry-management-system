@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#082a4a">
   <title>GNEM Slurry Production Details</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260908-evenrows">
+  <link rel="stylesheet" href="/static/style.css?v=20260908-training">
 </head>
 <body data-department="{{ department }}">
   <header class="topbar">
@@ -67,7 +67,7 @@
           <div class="dialog-title"><h2>Edit today's task / 编辑今日任务</h2><button type="button" id="close-home-task" class="secondary">Close / 关闭</button></div>
           <p class="wide" id="home-task-editor-help">Add one item per task. Each production item has its own formula, tanks, and assigned machine. / 每项任务单独添加；每个生产任务可设置独立配方、罐数和设备。</p>
           <div id="home-task-items" class="wide task-items"></div>
-          <div class="wide task-editor-actions"><button type="button" id="add-home-task-item" class="secondary">Add task / 添加任务</button><button type="button" id="add-home-schedule-item" class="secondary" data-slitting-only hidden>Add schedule row / 添加排程行</button></div>
+          <div class="wide task-editor-actions"><button type="button" id="add-home-task-item" class="secondary">Add task / 添加任务</button><button type="button" id="add-home-schedule-item" class="secondary" data-slitting-only hidden>Add schedule row / 添加排程行</button><button type="button" id="add-home-training-item" class="secondary" data-slitting-only hidden>Add training / 添加培训</button></div>
           <label class="wide">Reminders (optional) / 提醒事项（可选） (one bullet per line / 每行一条)<textarea id="home-reminders" rows="5" maxlength="3600" placeholder="Leave blank if there is no reminder. / 如无提醒可留空。&#10;Example: Confirm qualified quantity for J2 batch 2301"></textarea></label>
           <div class="wide form-actions"><button class="primary">Save today's tasks / 保存今日任务</button><span id="home-daily-task-status" aria-live="polite"></span></div>
         </form>
@@ -353,6 +353,17 @@
                 </form>
                 <div id="manager-event-types"></div>
               </section>
+              <section id="slitting-category-options-panel" class="manager-config-section" data-slitting-only hidden>
+                <h3>Slitting main and subcategories / 分切主类别和子类别</h3>
+                <p>Select an existing main category or enter a new one, then add its corresponding subcategory. / 选择现有主类别或输入新主类别，然后添加对应的子类别。</p>
+                <form id="slitting-category-form" class="form-grid">
+                  <label>Existing main category / 现有主类别<select name="existing_main_category"><option value="">New main category / 新主类别</option></select></label>
+                  <label>New main category / 新主类别<input name="new_main_category" maxlength="160" placeholder="Maintenance / 维护"></label>
+                  <label class="wide">Corresponding subcategory / 对应子类别<input name="subcategory" maxlength="160" required placeholder="Preventive maintenance / 预防性维护"></label>
+                  <div class="wide form-actions"><button class="primary">Add category pair / 添加类别组合</button><span id="slitting-category-status" aria-live="polite"></span></div>
+                </form>
+                <div id="slitting-category-list"></div>
+              </section>
             </div>
           </article>
         </div>
@@ -373,8 +384,8 @@
     </dialog>
   </main>
   <script src="/static/departments.js"></script>
-  <script src="/static/app.js?v=20260908-evenrows"></script>
-  <script src="/static/slitting.js?v=20260908-evenrows"></script>
+  <script src="/static/app.js?v=20260908-slurry-operational"></script>
+  <script src="/static/slitting.js?v=20260908-category-editor"></script>
   <script src="/static/inventory.js"></script>
 </body>
 </html>

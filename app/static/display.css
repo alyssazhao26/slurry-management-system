@@ -76,7 +76,7 @@ body.configurable-display .display-section.rate-card strong{font-size:calc(var(-
 @media(max-width:1100px){.slitting-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.slitting-machine-grid{grid-template-columns:1fr}}
 @media(max-width:620px){.slitting-kpi-grid,.slitting-machine-card .slitting-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .slitting-task-overview { display: grid; gap: 12px; }
-.slitting-task-overview > article { display: grid; grid-template-columns: 1fr 1.4fr .8fr 1.5fr; gap: 16px; align-items: center; padding: 14px 16px; border: 1px solid #cbdde3; border-radius: 10px; background: #f8fcfd; }
+.slitting-task-overview > article { display: grid; grid-template-columns: .9fr 1.2fr .75fr 1.35fr; gap: 9px; align-items: center; padding: 11px 12px; border: 1px solid #cbdde3; border-radius: 10px; background: #f8fcfd; }
 .slitting-task-overview span { display: block; color: #4c6972; font-size: .8em; margin-bottom: 4px; }
 .slitting-task-overview strong { color: #123f48; }
 .slitting-task-progress { min-width: 0; }
@@ -86,5 +86,11 @@ body.configurable-display .display-section.rate-card strong{font-size:calc(var(-
 .progress-track.no-progress { background: #b8c5c9; }
 .progress-track.no-progress i { background: transparent; }
 .slitting-task-schedule { margin-top: 18px; }
-.slitting-task-schedule h3 { margin: 0 0 8px; color: #123f48; }
+.slitting-task-schedule h3 { margin: 0 0 8px; color: #d8f6f2; font-size: 1.08em; }
+.slitting-task-section .display-table th,.slitting-task-section .display-table td { padding: 8px 6px; font-size: .82em; white-space: nowrap; }
+.slitting-training-block { border-color: #d8b86a; background: #fffaf01a; }
+.slitting-training-block .section-head h2 { color: #ffe496; white-space: nowrap; }
+.slitting-training-block .display-table-wrap { margin-top: 10px; }
+.slitting-training-table { table-layout: auto; width: max-content; min-width: 100%; }
+.slitting-training-table th,.slitting-training-table td { padding: 7px 6px !important; font-size: .78em !important; line-height: 1.15; white-space: nowrap !important; }
 @media (max-width: 900px) { .slitting-task-overview > article { grid-template-columns: 1fr 1fr; } }

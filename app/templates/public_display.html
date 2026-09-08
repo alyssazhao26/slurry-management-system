@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#06233f">
   <title>GNEM Slurry Production Details</title>
-  <link rel="stylesheet" href="/static/display.css?v=20260907-layout5">
+  <link rel="stylesheet" href="/static/display.css?v=20260908-slurry-operational">
 </head>
 <body>
   <main class="display-shell">
@@ -20,18 +20,13 @@
       </section>
       <article class="display-section rate-card production-rates-card" data-display-block="rates"><div class="section-head"><h2 data-block-title>Production rates / 生产率</h2></div><div class="rate-pair"><div><small>Achievement Rate / 达成率</small><strong id="achievement-rate">—</strong></div><div><small>Qualified Rate / 合格率</small><strong id="qualified-rate">—</strong></div></div><small id="achievement-note" hidden></small><small id="qualified-note" hidden></small></article>
       <section class="display-section pending-qualification-section" data-display-block="pending_qualification"><div class="section-head"><h2 data-block-title>Pending qualification data / 待补录合格数据</h2><span>Follow-up required / 需要跟进</span></div><div id="pending-qualifications" class="pending-qualification-list"></div></section>
-      <section class="display-section reminder-section" data-display-block="reminders"><div class="section-head"><h2 data-block-title>Reminders / 提醒事项</h2><span>Today / 当日</span></div><div id="display-reminders" class="display-reminder-list"></div></section>
       <section class="display-section ongoing-section" data-display-block="ongoing">
-        <div class="section-head"><h2 data-block-title>Ongoing issue tracker / 进行中问题追踪</h2><span>Requires follow-up / 需跟进</span></div>
+        <div class="section-head"><h2 data-block-title>Ongoing abnormalities / 进行中异常</h2><span>Requires follow-up / 需跟进</span></div>
         <div id="ongoing-events" class="ongoing-list"></div>
-      </section>
-      <section class="display-section event-detail-section" data-display-block="events">
-        <div class="section-head"><h2 data-block-title>Event details / 事件明细</h2><span id="event-detail-date">Today / 当日</span></div>
-        <div id="event-tracker" class="display-table-wrap"></div>
       </section>
     </section>
     <footer>Read-only factory display / 只读工厂展示屏 · Detailed records are entered in GNEM / 详细记录请在 GNEM 系统中录入</footer>
   </main>
-  <script src="/static/display.js?v=20260907-layout5"></script>
+  <script src="/static/display.js?v=20260908-slurry-operational"></script>
 </body>
 </html>

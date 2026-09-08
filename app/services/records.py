@@ -482,6 +482,33 @@ STANDARD_FIELD_CATALOG = {
     ],
 }
 
+SLITTING_STANDARD_FIELD_CATALOG = {
+    "production": [
+        ("shift_name", "Shift / 班次", "select"),
+        ("machine_code", "Machine / 机台", "select"),
+        ("slitting_model", "Model / 型号", "select"),
+        ("planned_rolls", "Planned input rolls / 计划卷数", "number"),
+        ("input_rolls", "Input rolls / 投入卷数", "number"),
+        ("qualified_rolls", "Qualified output rolls / 合格产出卷数", "number"),
+    ],
+    "abnormality": [
+        ("event_time", "Event time / 事件时间", "time_range"),
+        ("shift_name", "Shift / 班次", "select"),
+        ("machine_code", "Machine / 机台", "select"),
+        ("event_type", "Main category / 主类别", "select"),
+        ("subcategory", "Subcategory / 子类别", "select"),
+        ("severity", "Severity | Priority / 严重程度 | 优先级", "select"),
+        ("is_resolved", "Is it resolved? / 是否已解决", "select"),
+        ("responsible_person", "Responsible person / 责任人", "text"),
+        ("target_finish_date", "Expected finish date / 预计完成日期", "date"),
+        ("effective_time_cost", "是否为有效时间成本 / Effective time cost?", "select"),
+        ("event_notes", "Notes / 备注", "textarea"),
+        ("immediate_action", "Immediate action / 立即措施", "textarea"),
+        ("actual_finish_date", "Actual finish date / 实际完成日期", "date"),
+        ("solution_provided", "Solution provided / 解决方案", "textarea"),
+    ],
+}
+
 # Stored as value|bilingual display text so manager edits keep the database value stable.
 STANDARD_FIELD_OPTIONS = {
     ("production", "shift_name"): ["Day|Day / 白班", "Night|Night / 夜班"],
@@ -496,8 +523,29 @@ STANDARD_FIELD_OPTIONS = {
 }
 
 
+SLITTING_STANDARD_FIELD_OPTIONS = {
+    ("production", "shift_name"): ["Day|Day / 白班", "Night|Night / 夜班"],
+    ("production", "machine_code"): [item for item in slitting.MACHINES],
+    ("abnormality", "shift_name"): ["Day|Day / 白班", "Night|Night / 夜班"],
+    ("abnormality", "machine_code"): [*[item for item in slitting.MACHINES], "NA|NA / 不适用"],
+    ("abnormality", "severity"): ["normal|Normal / 正常", "low|Low / 低", "medium|Medium / 中", "high|High / 高"],
+    ("abnormality", "is_resolved"): ["no|No / 否", "yes|Yes / 是"],
+    ("abnormality", "effective_time_cost"): ["no|No / 否", "yes|Yes / 是"],
+}
+
+
+def _standard_field_catalog():
+    return SLITTING_STANDARD_FIELD_CATALOG if current_department() == "slitting" else STANDARD_FIELD_CATALOG
+
+
+def _standard_field_options():
+    return SLITTING_STANDARD_FIELD_OPTIONS if current_department() == "slitting" else STANDARD_FIELD_OPTIONS
+
+
 def get_standard_field_settings(form_key):
-    if form_key not in STANDARD_FIELD_CATALOG:
+    catalog = _standard_field_catalog()
+    option_defaults = _standard_field_options()
+    if form_key not in catalog:
         raise ValueError("Unknown form.")
     with transaction() as cursor:
         cursor.execute(
@@ -511,15 +559,15 @@ def get_standard_field_settings(form_key):
             "label": saved.get(key, {}).get("label") or label,
             "help_text": saved.get(key, {}).get("help_text") or "",
             "input_type": input_type,
-            "options_json": saved.get(key, {}).get("options_json") if saved.get(key, {}).get("options_json") is not None else STANDARD_FIELD_OPTIONS.get((form_key, key), []),
+            "options_json": saved.get(key, {}).get("options_json") if saved.get(key, {}).get("options_json") is not None else option_defaults.get((form_key, key), []),
             "is_configured": key in saved,
         }
-        for key, label, input_type in STANDARD_FIELD_CATALOG[form_key]
+        for key, label, input_type in catalog[form_key]
     ]
 
 
 def save_standard_field_setting(form_key, payload):
-    valid = {key for key, _, _ in STANDARD_FIELD_CATALOG.get(form_key, [])}
+    valid = {key for key, _, _ in _standard_field_catalog().get(form_key, [])}
     field_key = str(payload.get("field_key", "")).strip()
     label = str(payload.get("label", "")).strip()
     if field_key not in valid or not label:
@@ -706,7 +754,7 @@ def manager_dashboard():
     }
 
 
-DAILY_TASK_TYPES = {"production", "cleaning", "custom", "slitting_production", "slitting_schedule"}
+DAILY_TASK_TYPES = {"production", "cleaning", "custom", "slitting_production", "slitting_schedule", "slitting_training"}
 DAILY_TASK_MACHINES = {*(f"J{number}" for number in range(1, 10)), *(f"J10-{number}" for number in range(1, 6))}
 SLITTING_TASK_PRODUCTS = {
     "513MM", "514.9MM", "515.6MM", "547MM", "242MM", "515.4MM", "270.6MM", "270MM",
@@ -720,12 +768,11 @@ DISPLAY_BLOCK_DEFAULTS = [
     {"key": "task", "title": "Today's task / 今日任务", "visible": True, "order": 10, "width": 2, "height": 2, "font_size": 16},
     {"key": "rates", "title": "Production rates / 生产率", "visible": True, "order": 20, "width": 1, "height": 1, "font_size": 16},
     {"key": "pending_qualification", "title": "Pending qualification data / 待补录合格数据", "visible": True, "order": 25, "width": 1, "height": 1, "font_size": 16},
-    {"key": "reminders", "title": "Reminders / 提醒事项", "visible": True, "order": 30, "width": 1, "height": 1, "font_size": 16},
-    {"key": "ongoing", "title": "Ongoing issue tracker / 进行中问题追踪", "visible": True, "order": 40, "width": 2, "height": 2, "font_size": 16},
-    {"key": "events", "title": "Event details / 事件明细", "visible": True, "order": 50, "width": 5, "height": 2, "font_size": 16},
+    {"key": "ongoing", "title": "Ongoing abnormalities / 进行中异常", "visible": True, "order": 40, "width": 5, "height": 2, "font_size": 16},
 ]
 SLITTING_DISPLAY_BLOCK_DEFAULTS = [
-    {"key": "slitting_task", "title": "Slitting task overview / 分切及包装任务概览", "visible": True, "order": 5, "width": 5, "height": 3, "font_size": 16},
+    {"key": "slitting_task", "title": "Slitting task overview / 分切及包装任务概览", "visible": True, "order": 5, "width": 3, "height": 3, "font_size": 14},
+    {"key": "slitting_training", "title": "Training / 培训", "visible": True, "order": 6, "width": 2, "height": 3, "font_size": 13},
     {"key": "slitting_events", "title": "Ongoing abnormalities / 进行中异常", "visible": True, "order": 10, "width": 5, "height": 2, "font_size": 16},
 ]
 DISPLAY_EVENT_COLUMN_DEFAULTS = [
@@ -772,8 +819,8 @@ SLITTING_EVENT_COLUMN_DEFAULTS = [
 
 def default_display_settings():
     if current_department() == "slitting":
-        return {"layout_version": 2, "branding": dict(SLITTING_DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in SLITTING_DISPLAY_BLOCK_DEFAULTS], "event_columns": [dict(x) for x in SLITTING_EVENT_COLUMN_DEFAULTS]}
-    return {"layout_version": 2, "branding": dict(DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in DISPLAY_BLOCK_DEFAULTS], "event_columns": [dict(x) for x in DISPLAY_EVENT_COLUMN_DEFAULTS]}
+        return {"layout_version": 3, "branding": dict(SLITTING_DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in SLITTING_DISPLAY_BLOCK_DEFAULTS], "event_columns": [dict(x) for x in SLITTING_EVENT_COLUMN_DEFAULTS]}
+    return {"layout_version": 3, "branding": dict(DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in DISPLAY_BLOCK_DEFAULTS], "event_columns": []}
 
 def get_display_settings():
     with transaction() as cursor:
@@ -786,6 +833,15 @@ def get_display_settings():
             block["width"] = {1: 2, 2: 4, 3: 5}.get(int(block.get("width", 1)), 2)
             if block.get("type") == "static_text": block.setdefault("heading_level", "h2")
         saved["layout_version"] = 2
+    if current_department() == "slitting" and int(saved.get("layout_version", 1)) < 3:
+        for block in saved.get("blocks", []):
+            if block.get("key") == "slitting_task":
+                block.update({"width": 3, "height": 3, "font_size": 14})
+        saved["layout_version"] = 3
+    if current_department() == "slurry" and int(saved.get("layout_version", 1)) < 3:
+        saved["blocks"] = [block for block in saved.get("blocks", []) if block.get("key") not in {"events", "reminders"}]
+        saved["event_columns"] = []
+        saved["layout_version"] = 3
     defaults = default_display_settings()
     if isinstance(saved.get("branding"), dict):
         defaults["branding"].update({key: str(saved["branding"].get(key, value)) for key, value in defaults["branding"].items()})
@@ -799,7 +855,8 @@ def get_display_settings():
     return defaults
 
 def save_display_settings(payload, actor_id=None):
-    defaults, cleaned = default_display_settings(), {"layout_version": 2}
+    defaults = default_display_settings()
+    cleaned = {"layout_version": defaults["layout_version"]}
     branding = payload.get("branding", defaults["branding"])
     if not isinstance(branding, dict): raise ValueError("Branding must be an object.")
     cleaned_branding = {key: str(branding.get(key, fallback)).strip() for key, fallback in defaults["branding"].items()}
@@ -902,17 +959,21 @@ def save_daily_task(payload, actor_id=None):
 
     task_items = []
     if current_department() == "slitting":
-        production_count = schedule_count = 0
+        production_count = schedule_count = training_count = 0
         for raw_item in raw_items:
             if not isinstance(raw_item, dict): raise ValueError("Each task item must be valid.")
             task_type = str(raw_item.get("type", "")).strip().lower()
             if task_type == "slitting_production":
                 production_count += 1
                 product_item = str(raw_item.get("product_item", "")).replace(" ", "").strip().upper()
+                custom_product_item = str(raw_item.get("custom_product_item", "")).strip()
                 status = str(raw_item.get("production_status", "")).strip()
                 target_unit = str(raw_item.get("target_unit", "")).strip()
                 custom_unit = str(raw_item.get("custom_unit", "")).strip()
-                if product_item not in SLITTING_TASK_PRODUCTS: raise ValueError("Choose a listed Slitting production item.")
+                if product_item == "CUSTOM":
+                    if not custom_product_item or len(custom_product_item) > 120: raise ValueError("Enter a custom product item of 120 characters or fewer.")
+                    product_item = custom_product_item
+                elif product_item not in SLITTING_TASK_PRODUCTS: raise ValueError("Choose a listed Slitting production item or Custom.")
                 if status not in SLITTING_TASK_STATUSES: raise ValueError("Choose a valid Slitting production status.")
                 if target_unit not in SLITTING_TARGET_UNITS: raise ValueError("Specify whether the production target uses sr, MR, or a custom unit.")
                 if target_unit == "custom" and (not custom_unit or len(custom_unit) > 30): raise ValueError("Enter a custom production target unit of 30 characters or fewer.")
@@ -924,19 +985,30 @@ def save_daily_task(payload, actor_id=None):
                 schedule_count += 1
                 machine = str(raw_item.get("machine", "")).strip().upper()
                 product_item = str(raw_item.get("product_item", "")).replace(" ", "").strip().upper()
+                custom_product_item = str(raw_item.get("custom_product_item", "")).strip()
                 planned_input = str(raw_item.get("planned_input", "")).strip()
                 operator = str(raw_item.get("operator", "")).strip()
                 shift_lead = str(raw_item.get("shift_lead", "")).strip()
                 if machine not in slitting.MACHINES: raise ValueError("Choose a listed Slitting machine.")
-                if product_item not in SLITTING_TASK_PRODUCTS: raise ValueError("Choose a listed Slitting production item.")
+                if product_item == "CUSTOM":
+                    if not custom_product_item or len(custom_product_item) > 120: raise ValueError("Enter a custom scheduled product item of 120 characters or fewer.")
+                    product_item = custom_product_item
+                elif product_item not in SLITTING_TASK_PRODUCTS: raise ValueError("Choose a listed Slitting production item or Custom.")
                 if not planned_input or len(planned_input) > 120: raise ValueError("Schedule planned input is required and must be 120 characters or fewer.")
                 if not operator or len(operator) > 120: raise ValueError("Schedule operator is required and must be 120 characters or fewer.")
                 if not shift_lead or len(shift_lead) > 120: raise ValueError("Schedule shift lead is required and must be 120 characters or fewer.")
                 task_items.append({"type": task_type, "machine": machine, "product_item": product_item, "planned_input": planned_input, "operator": operator, "shift_lead": shift_lead})
+            elif task_type == "slitting_training":
+                training_count += 1
+                training = {key: str(raw_item.get(key, "")).strip() for key in ("training_item", "training_type", "subject", "time")}
+                if any(not value for value in training.values()): raise ValueError("Complete training item, type, person or group being trained, and time.")
+                if any(len(value) > 120 for value in training.values()): raise ValueError("Each training field must be 120 characters or fewer.")
+                task_items.append({"type": task_type, **training})
             else:
-                raise ValueError("Slitting tasks must be production overview or schedule rows.")
-        if not production_count: raise ValueError("Add at least one Slitting production item.")
-        if not schedule_count: raise ValueError("Add at least one machine schedule row.")
+                raise ValueError("Slitting tasks must be production, schedule, or training items.")
+        if not production_count and not training_count: raise ValueError("Add at least one Slitting production or training item.")
+        if production_count and not schedule_count: raise ValueError("Add at least one machine schedule row for production.")
+        if schedule_count and not production_count: raise ValueError("A machine schedule requires at least one production item.")
     else:
         task_items = _clean_standard_daily_task_items(raw_items)
 
@@ -1121,12 +1193,11 @@ def public_display_summary(record_date=None):
         event_tracker = cursor.fetchall()
         cursor.execute(
             """
-            SELECT id, event_date, machine_code, event_type, severity,
-                   responsible_person, target_finish_date
+            SELECT id, event_date, start_time, machine_code, event_type, severity,
+                   is_resolved, responsible_person, target_finish_date, custom_fields
             FROM system_import.abnormality_reports
             WHERE is_resolved = 'no'
             ORDER BY event_date DESC, start_time DESC, created_at DESC
-            LIMIT 8
             """
         )
         ongoing_events = cursor.fetchall()
@@ -1154,6 +1225,7 @@ def public_display_summary(record_date=None):
         pending_qualifications = [r for r in slitting.summary()['records'] if r.get('qualified_quantity') is None]
         for row in pending_qualifications:
             row['actual_quantity'] = row['input_rolls'] * row['stations']
+        ongoing_events = [slitting.enrich(row) for row in ongoing_events]
     return {
         "display_date": selected_date.isoformat(),
         "daily_task": _json_safe_rows([daily_task])[0],

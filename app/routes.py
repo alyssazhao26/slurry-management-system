@@ -35,7 +35,7 @@ from .services.backups import run_manual_backup
 
 from .services.inventory import (check_out_product, get_product_by_token, inventory_summary, make_qr_png, register_product, register_small_roll)
 from .departments import current_department, DEPARTMENTS, department_context
-from .services.slitting import summary as slitting_summary, model_specs, save_model_spec, CATEGORIES, MACHINES
+from .services.slitting import summary as slitting_summary, model_specs, save_model_spec, event_categories, save_event_category, MACHINES
 
 web = Blueprint("web", __name__)
 
@@ -226,7 +226,16 @@ def slitting_production_summary():
 
 @web.get('/api/slitting/options')
 def slitting_options():
-    return jsonify(categories=CATEGORIES, machines=MACHINES, models=[row['model_code'] for row in model_specs()])
+    return jsonify(categories=event_categories(), machines=MACHINES, models=[row['model_code'] for row in model_specs()])
+
+@web.post('/api/manager/slitting-event-categories')
+@require_manager
+def save_slitting_event_category():
+    try:
+        saved = save_event_category(request.get_json() or {}, session.get('manager_id'))
+        return jsonify(message='Slitting main category and subcategory saved.', category=saved), 201
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
 
 @web.get('/api/manager/slitting-models')
 @require_manager

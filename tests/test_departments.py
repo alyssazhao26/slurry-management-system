@@ -49,12 +49,25 @@ def test_edit_recomputes_from_snapshot():
     assert updated['qualified_quantity']==pytest.approx(3907.2)
     assert updated['custom_fields']['slitting']['qualified_rolls']==22
 
-def test_dependent_categories():
+def test_dependent_categories(monkeypatch):
     category=next(iter(CATEGORIES)); sub=CATEGORIES[category][0]
+    monkeypatch.setattr(slitting, 'event_categories', lambda: CATEGORIES)
     result=normalise_abnormality({'event_type':category,'subcategory':sub,'event_notes':'Note'})
     assert result['description']==sub+' — Note'
     assert result['custom_fields']['event_notes']=='Note'
     with pytest.raises(ValueError): normalise_abnormality({'event_type':category,'subcategory':'Not in catalog'})
+
+def test_save_slitting_event_category(monkeypatch):
+    calls=[]
+    class Cursor:
+        def execute(self,sql,params=None): calls.append((sql,params))
+    from contextlib import contextmanager
+    @contextmanager
+    def fake_transaction(): yield Cursor()
+    monkeypatch.setattr(slitting,'transaction',fake_transaction)
+    saved=slitting.save_event_category({'main_category':'Maintenance / 维护','subcategory':'Preventive / 预防'},actor_id=2)
+    assert saved['main_category']=='Maintenance / 维护'
+    assert calls and calls[0][1][2]==2
 
 def test_department_context_restored_after_exception():
     with Flask(__name__).app_context():

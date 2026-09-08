@@ -15,6 +15,29 @@ CATEGORIES = {
 }
 NUMBERS = ['width_m','coated_length_m','coated_width_m','stations','slitting_length_m','planned_rolls','input_rolls','qualified_rolls']
 
+def event_categories():
+    with transaction() as cursor:
+        cursor.execute("SELECT main_category, subcategory FROM system_import.slitting_event_categories WHERE is_active=TRUE ORDER BY display_order, id")
+        rows = cursor.fetchall()
+    categories = {}
+    for row in rows:
+        categories.setdefault(row['main_category'], []).append(row['subcategory'])
+    return categories
+
+def save_event_category(payload, actor_id=None):
+    main = str(payload.get('main_category', '')).strip()
+    subcategory = str(payload.get('subcategory', '')).strip()
+    if not main or not subcategory: raise ValueError('Enter both a main category and its subcategory.')
+    if len(main) > 160 or len(subcategory) > 160: raise ValueError('Category names must be 160 characters or fewer.')
+    if main == subcategory: raise ValueError('Main category and subcategory must be different.')
+    with transaction() as cursor:
+        cursor.execute("""INSERT INTO system_import.slitting_event_categories
+            (main_category, subcategory, is_active, updated_by)
+            VALUES (%s,%s,TRUE,%s)
+            ON DUPLICATE KEY UPDATE is_active=TRUE, updated_by=VALUES(updated_by)""",
+            (main, subcategory, actor_id))
+    return {'main_category': main, 'subcategory': subcategory}
+
 def model_specs(active_only=True):
     where = " WHERE is_active=TRUE" if active_only else ""
     with transaction() as cursor:
@@ -98,7 +121,8 @@ def normalise_abnormality(payload, existing=None):
     old = custom(existing or {})
     category = payload.get('event_type', (existing or {}).get('event_type'))
     subcategory = payload.get('subcategory', old.get('subcategory'))
-    if category not in CATEGORIES or subcategory not in CATEGORIES[category]:
+    categories = event_categories()
+    if category not in categories or subcategory not in categories[category]:
         raise ValueError('Choose a main category and a subcategory belonging to it.')
     notes = str(payload.get('event_notes', old.get('event_notes', ''))).strip()
     if len(notes) > 4000: raise ValueError('Notes must be 4000 characters or fewer.')

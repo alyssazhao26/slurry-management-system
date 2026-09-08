@@ -21,15 +21,19 @@ const taskStatusLabels={production_in_progress:'Production in progress / 生产�
 function taskActual(productItem,targetUnit,records){
   const targetWidth=parseFloat(productItem);
   if(!Number.isFinite(targetWidth)||targetUnit==='custom')return 0;
-  const valueField=targetUnit==='MR'?'input_rolls':'qualified_rolls';
-  return records.filter(record=>Math.abs(Number(record.width_m)*1000-targetWidth)<0.06).reduce((total,record)=>total+(Number(record[valueField])||0),0);
+  return records.filter(record=>Math.abs(Number(record.width_m)*1000-targetWidth)<0.06).reduce((total,record)=>total+(Number(record.input_rolls)||0),0);
 }
 function renderSlittingTask(task,records){
   const items=task?.task_items||[],productionItems=items.filter(item=>item.type==='slitting_production'),scheduleItems=items.filter(item=>item.type==='slitting_schedule');
-  if(!items.length)return '<p class="empty">No task saved for this date / 当日暂无任务</p>';
-  const overview=productionItems.length?`<div class="slitting-task-overview">${productionItems.map(item=>{const targetUnit=item.target_unit||'sr',unit=targetUnit==='custom'?(item.custom_unit||'custom'):targetUnit,actual=taskActual(item.product_item,targetUnit,records),target=Number(item.production_target)||0,percent=target?actual/target*100:0;return `<article><div><span>Production item / 生产项目</span><strong>${escapeHtml(item.product_item)}</strong></div><div><span>Production status / 生产状态</span><strong>${escapeHtml(taskStatusLabels[item.production_status]||item.production_status)}</strong></div><div><span>Production target / 生产目标</span><strong>${target.toLocaleString()} ${escapeHtml(unit)}</strong></div><div class="slitting-task-progress"><span>Actual progress / 实际进度</span><div class="progress-track ${actual>0?'has-progress':'no-progress'}"><i style="width:${Math.min(Math.max(percent,0),100)}%"></i></div><strong>${actual.toLocaleString()} / ${target.toLocaleString()} ${escapeHtml(unit)} · ${percent.toFixed(1)}%</strong></div></article>`}).join('')}</div>`:'';
+  if(!productionItems.length&&!scheduleItems.length)return '<p class="empty">No production task saved for this date / 当日暂无生产任务</p>';
+  const overview=productionItems.length?`<div class="slitting-task-overview">${productionItems.map(item=>{const targetUnit=item.target_unit||'sr',unit=targetUnit==='custom'?(item.custom_unit||'custom'):targetUnit,actual=taskActual(item.product_item,targetUnit,records),target=Number(item.production_target)||0,percent=target?actual/target*100:0,fill=Math.min(Math.max(percent,0),100);return `<article><div><span>Production item / 生产项目</span><strong>${escapeHtml(item.product_item)}</strong></div><div><span>Production status / 生产状态</span><strong>${escapeHtml(taskStatusLabels[item.production_status]||item.production_status)}</strong></div><div><span>Production target / 生产目标</span><strong>${target.toLocaleString()} ${escapeHtml(unit)}</strong></div><div class="slitting-task-progress"><span>Actual input progress / 实际投入进度</span><div class="progress-track ${actual>0?'has-progress':'no-progress'}" data-progress-fill="${fill}"><i></i></div><strong>${actual.toLocaleString()} / ${target.toLocaleString()} ${escapeHtml(unit)} · ${percent.toFixed(1)}%</strong></div></article>`}).join('')}</div>`:'';
   const schedule=scheduleItems.length?`<div class="slitting-task-schedule"><h3>Machine production scheduling / 机器生产排程</h3><div class="display-table-wrap"><table class="display-table"><thead><tr><th>Machine / 机台</th><th>Product / 项目</th><th>Planned input / 计划排产</th><th>Operator / 操作员</th><th>Shift lead / 班组长</th></tr></thead><tbody>${scheduleItems.map(item=>`<tr><td>${escapeHtml(item.machine)}</td><td>${escapeHtml(item.product_item)}</td><td>${escapeHtml(item.planned_input)}</td><td>${escapeHtml(item.operator)}</td><td>${escapeHtml(item.shift_lead)}</td></tr>`).join('')}</tbody></table></div></div>`:'';
   return overview+schedule;
+}
+function renderSlittingTraining(task){
+  const trainingItems=(task?.task_items||[]).filter(item=>item.type==='slitting_training');
+  if(!trainingItems.length)return '<p class="empty">No training saved for this date / 当日暂无培训</p>';
+  return `<div class="display-table-wrap"><table class="display-table slitting-training-table"><thead><tr><th>Training item / 培训项目</th><th>Training type / 培训类型</th><th>Person/group trained / 受训人员或小组</th><th>Time / 时间</th></tr></thead><tbody>${trainingItems.map(item=>`<tr><td>${escapeHtml(item.training_item)}</td><td>${escapeHtml(item.training_type)}</td><td>${escapeHtml(item.subject)}</td><td>${escapeHtml(item.time)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function renderPermanentText(root,value){
   root.replaceChildren();let list=null,listType='';
@@ -50,13 +54,15 @@ function eventTable(events,settings){
 }
 async function refreshSlittingDisplay(){
   try{
-    const [productionResponse,eventResponse]=await Promise.all([fetch('/api/slitting/summary?department=slitting&date='+encodeURIComponent(selectedDate)),fetch('/api/daily-report?department=slitting&date='+encodeURIComponent(selectedDate))]);
-    if(!productionResponse.ok||!eventResponse.ok)throw Error();
-    const production=await productionResponse.json(),events=await eventResponse.json(),settings=production.display_settings||{blocks:[],event_columns:[]};
+    const [productionResponse,eventResponse,openResponse]=await Promise.all([fetch('/api/slitting/summary?department=slitting&date='+encodeURIComponent(selectedDate)),fetch('/api/daily-report?department=slitting&date='+encodeURIComponent(selectedDate)),fetch('/api/public-display?department=slitting')]);
+    if(!productionResponse.ok||!eventResponse.ok||!openResponse.ok)throw Error();
+    const production=await productionResponse.json(),events=await eventResponse.json(),openData=await openResponse.json(),settings=production.display_settings||{blocks:[],event_columns:[]};
     applyDisplaySettings(settings);
     document.querySelector('#display-date').textContent=selectedDate;
-    document.querySelector('#slitting-display-task').innerHTML=renderSlittingTask(production.daily_task,production.records||[]);
-    const ongoingEvents=(events.events||[]).filter(event=>![true,1,'1','yes','Yes','YES'].includes(event.is_resolved));
+    const taskRoot=document.querySelector('#slitting-display-task');taskRoot.innerHTML=renderSlittingTask(production.daily_task,production.records||[]);
+    taskRoot.querySelectorAll('[data-progress-fill]').forEach(track=>{track.querySelector('i').style.width=`${Number(track.dataset.progressFill)||0}%`;});
+    document.querySelector('#slitting-display-training').innerHTML=renderSlittingTraining(production.daily_task);
+    const ongoingEvents=openData.ongoing_events||[];
     document.querySelector('#slitting-display-events').innerHTML=eventTable(ongoingEvents,settings);
     document.querySelector('#display-status').textContent='Updated / 更新 '+new Date().toLocaleTimeString();
   }catch{document.querySelector('#display-status').textContent='Refresh failed; displayed data may be stale / 刷新失败，数据可能已过期';}

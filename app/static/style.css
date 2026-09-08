@@ -152,6 +152,9 @@ main { width: 100%; max-width: none; margin: 34px 0 68px; padding: 0 clamp(24px,
 .task-item-head .secondary { padding: 6px 10px; }
 .slitting-production-item { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .slitting-schedule-item { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.slitting-training-item { grid-template-columns: repeat(5, minmax(0, 1fr)); border-color: #b98a2d; background: #fffaf0; }
+.slitting-training-section { margin-top: 24px; padding-top: 18px; border-top: 4px solid #c58b19; }
+.slitting-training-section h3 { color: #805500; }
 .task-editor-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .task-production-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .task-production-fields[hidden],

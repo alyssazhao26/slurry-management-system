@@ -118,6 +118,16 @@ function categoryControls(form, record=null) {
 function slittingInputMarkup(row={}) {
  return slittingFields.slice(0,3).map(([key,label,step])=>`<label>${label}<input name="${key}" type="number" min="0" step="${step}" ${key==='qualified_rolls'?'':'required'} value="${escapeHtml(row[key]??'')}">${key==='qualified_rolls'?'<small>Finished small rolls; blank means pending / 合格小卷数，待确认可留空</small>':''}</label>`).join('');
 }
+function renderSlittingCategoryEditor(){
+ const panel=document.querySelector('#slitting-category-options-panel');if(!panel||!slittingOptions)return;
+ const select=panel.querySelector('[name="existing_main_category"]'),current=select.value;
+ select.innerHTML='<option value="">New main category / 新主类别</option>'+Object.keys(slittingOptions.categories).map(main=>`<option value="${escapeHtml(main)}">${escapeHtml(main)}</option>`).join('');
+ if([...select.options].some(option=>option.value===current))select.value=current;
+ panel.querySelector('#slitting-category-list').innerHTML=Object.entries(slittingOptions.categories).map(([main,subs])=>`<details class="manager-options-dropdown"><summary>${escapeHtml(main)} (${subs.length})</summary>${subs.map(sub=>`<div class="manager-type-row"><span>${escapeHtml(sub)}</span></div>`).join('')}</details>`).join('');
+}
+async function refreshSlittingOptions(){
+ const response=await fetch('/api/slitting/options');if(!response.ok)throw Error();slittingOptions=await response.json();renderSlittingCategoryEditor();return slittingOptions;
+}
 function modelSelectMarkup(selected='',name='formula_code') { return `<label>Model / 型号<select name="${name}" required><option value="">Select model / 选择型号</option>${(slittingOptions?.models||[]).map(model=>`<option value="${escapeHtml(model)}" ${model===selected?'selected':''}>${escapeHtml(model)}</option>`).join('')}</select></label>`; }
 function openSlittingEditor(type,record=null) {
  if(!slittingOptions){say('Slitting options are still loading.');return;}
@@ -170,12 +180,15 @@ if(isSlitting){
  defaultReportColumns.events.add('subcategory');defaultReportColumns.events.add('event_notes');initialiseReportColumnPicker();
  // Loading options gates submission instead of briefly showing slurry defaults.
  form.querySelector('button:not([type])').disabled=true;abnormalityForm.querySelector('button:not([type])').disabled=true;
- fetch('/api/slitting/options').then(async response=>{if(!response.ok)throw Error();slittingOptions=await response.json();
+ fetch('/api/slitting/options').then(async response=>{if(!response.ok)throw Error();slittingOptions=await response.json();renderSlittingCategoryEditor();
   for(const f of [form,abnormalityForm])f.elements.machine_code.innerHTML='<option value="">Select machine / 选择机台</option>'+slittingOptions.machines.map(m=>'<option>'+m+'</option>').join('')+(f===abnormalityForm?'<option value="NA">NA / 不适用</option>':'');
   form.elements.slitting_model.innerHTML='<option value="">Select model / 选择型号</option>'+slittingOptions.models.map(model=>`<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join('');
   categoryControls(abnormalityForm);
   form.querySelector('button:not([type])').disabled=false;abnormalityForm.querySelector('button:not([type])').disabled=false;
  }).catch(()=>say('Slitting options unavailable. Refresh before submitting. / 分切选项加载失败，请刷新。'));
+ const categoryEditor=document.querySelector('#slitting-category-form');
+ categoryEditor.elements.existing_main_category.addEventListener('change',event=>{categoryEditor.elements.new_main_category.disabled=Boolean(event.target.value);if(event.target.value)categoryEditor.elements.new_main_category.value='';});
+ categoryEditor.addEventListener('submit',async event=>{event.preventDefault();const existing=categoryEditor.elements.existing_main_category.value,newMain=categoryEditor.elements.new_main_category.value.trim(),subcategory=categoryEditor.elements.subcategory.value.trim(),status=document.querySelector('#slitting-category-status');const main=existing||newMain;if(!main){status.textContent='Choose or enter a main category. / 请选择或输入主类别。';return;}const response=await fetch('/api/manager/slitting-event-categories',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({main_category:main,subcategory})}),data=await response.json();status.textContent=response.ok?`${data.message} / 类别组合已保存。`:data.error;if(response.ok){categoryEditor.reset();categoryEditor.elements.new_main_category.disabled=false;await refreshSlittingOptions();}});
  const modelDialog=document.querySelector('#slitting-model-dialog'),modelForm=document.querySelector('#slitting-model-form');
  document.querySelector('#open-slitting-models').addEventListener('click',async()=>{try{await loadSlittingModelEditor();fillSlittingModelForm();modelDialog.showModal();}catch(error){say(error.message);}});
  document.querySelector('#close-slitting-models').addEventListener('click',()=>modelDialog.close());

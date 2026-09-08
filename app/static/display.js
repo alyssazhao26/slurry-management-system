@@ -31,12 +31,6 @@ function renderTask(task) {
   document.querySelector('#task-details').innerHTML = groups || '<p class="empty">No task saved for today / 今日暂无任务</p>';
 }
 
-function renderReminders(task) {
-  const reminders = task?.reminders || [];
-  document.querySelector('#display-reminders').innerHTML = reminders.length
-    ? `<ul>${reminders.map(reminder => `<li>${text(reminder)}</li>`).join('')}</ul>`
-    : '<p class="empty">No reminders for today / 今日暂无提醒</p>';
-}
 function displayDate(value) {
   const parts = String(value || '').split('-');
   return parts.length === 3 ? `${parts[1]}/${parts[2]}/${parts[0]}` : text(value);
@@ -102,7 +96,6 @@ async function refreshDisplay() {
     document.querySelector('#display-date').textContent = `${data.display_date} / 当日`;
     document.querySelector('#last-updated').textContent = data.last_updated ? `Last update / 最后更新: ${data.last_updated}` : 'No records yet / 暂无记录';
     renderTask(data.daily_task);
-    renderReminders(data.daily_task);
     renderPendingQualifications(data.pending_qualifications || [], data.display_date);
     document.querySelector('#achievement-rate').textContent = percent(data.production.achievement_rate);
     document.querySelector('#qualified-rate').textContent = percent(data.production.qualified_rate);
@@ -110,8 +103,6 @@ async function refreshDisplay() {
     const sameDay = `Production date: ${productionDate} / 生产日期`;
     document.querySelector('#achievement-note').textContent = sameDay;
     document.querySelector('#qualified-note').textContent = data.production.qualified_pending ? `${sameDay} · ${data.production.qualified_pending} pending / 待补录` : sameDay;
-    document.querySelector('#event-detail-date').textContent = `${data.display_date} / 当日`;
-    document.querySelector('#event-tracker').innerHTML = renderEventTable(data.event_tracker, data.display_settings);
     const ongoingRows = data.ongoing_events.map(event => `<article class="ongoing-item"><strong>${text(event.machine_code)} · ${text(event.event_type)}</strong><span>Severity / Priority / 严重程度 / 优先级: ${text(event.severity)}</span><span>Responsible person / 责任人: ${text(event.responsible_person)}</span><span>Expected finish / 预计完成: ${text(event.target_finish_date)}</span><span>Event date / 事件日期: ${text(event.event_date)}</span></article>`).join('');
     document.querySelector('#ongoing-events').innerHTML = ongoingRows || '<p class="empty">No ongoing events / 暂无进行中事件</p>';
     requestAnimationFrame(fitDisplayToViewport);
