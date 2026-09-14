@@ -10,6 +10,13 @@ def create_app(display_only=False):
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_object(Config)
     Config.validate_production_settings()
+    # The display-only listener is intentionally plain HTTP so employee phones
+    # can use attendance without installing the private Caddy certificate.
+    # Secure cookies are discarded by browsers on that listener, which breaks
+    # both CSRF continuity and the authenticated attendance session.
+    if display_only:
+        app.config["SESSION_COOKIE_SECURE"] = False
+        app.config["BEHIND_TLS_PROXY"] = False
     from .db import verify_ui_schema
     from .departments import department_context
     with app.app_context():
@@ -33,7 +40,12 @@ def create_app(display_only=False):
                 or (current_department() == "slitting" and request.path in {"/api/slitting/summary", "/api/daily-report"})
                 or request.path.startswith("/static/")
             )
-            if request.method not in {"GET", "HEAD"} or not public_display_path:
+            attendance_get_path = request.path in {"/attendance", "/api/csrf", "/api/attendance/me"}
+            attendance_post_path = request.path in {"/api/attendance/login", "/api/attendance/logout", "/api/attendance/reset-pin", "/api/attendance/records"}
+            allowed_display_request = (
+                request.method in {"GET", "HEAD"} and (public_display_path or attendance_get_path)
+            ) or (request.method == "POST" and attendance_post_path)
+            if not allowed_display_request:
                 abort(404)
 
         host = request.host.split(":", 1)[0].lower()

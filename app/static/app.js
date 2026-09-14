@@ -37,7 +37,7 @@ window.fetch = async (url, options = {}) => {
 let viewHistory = ['home'];
 let viewHistoryIndex = 0;
 let pendingManagerAction = null;
-function openManagerWorkspace(){document.querySelector('#manager-workspace-dialog').showModal()}
+function openManagerWorkspace(){document.querySelector('#manager-workspace-dialog').showModal();if(department==='slurry')initialiseAttendanceManager()}
 function openManagerLogin(action=null){pendingManagerAction=action;const form=document.querySelector('#manager-login-form');form.reset();document.querySelector('#manager-login-status').textContent='';document.querySelector('#manager-login-dialog').showModal();queueMicrotask(()=>form.elements.pin.focus())}
 document.querySelector('#manager-sign-in').addEventListener('click',()=>openManagerLogin());
 document.querySelector('#close-manager-workspace').addEventListener('click',()=>document.querySelector('#manager-workspace-dialog').close());
@@ -57,6 +57,81 @@ document.querySelector('#create-manager-backup').addEventListener('click',async 
   catch(error){status.textContent='Backup failed. Check the server connection. / 备份失败，请检查服务器连接。'}
   finally{button.disabled=false;button.textContent=originalText}
 });
+
+let attendanceInitialised=false,attendanceRecordPage=1,attendanceEmployeePage=1,attendanceEmployees=[];
+function attendanceTable(headers,rows){return `<div class="table-wrap"><table><thead><tr>${headers.map(value=>`<th>${escapeHtml(value)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`}
+function attendancePagination(root,page,total,onPage){const first=total?(page-1)*50+1:0,last=Math.min(page*50,total);root.innerHTML=`<span>Showing ${first}-${last} of ${total} / 显示 ${first}-${last}，共 ${total} 条</span><div><button type="button" class="secondary attendance-prev" ${page===1?'disabled':''}>Previous / 上一页</button><button type="button" class="secondary attendance-next" ${last>=total?'disabled':''}>Next / 下一页</button></div>`;root.querySelector('.attendance-prev').onclick=()=>onPage(page-1);root.querySelector('.attendance-next').onclick=()=>onPage(page+1)}
+function attendanceRecordQuery(){return new URLSearchParams({page:attendanceRecordPage,...Object.fromEntries(new FormData(document.querySelector('#attendance-filter')))});}
+const halfHourValues=(start,end)=>Array.from({length:Math.round((end-start)*2)+1},(_,index)=>(start+index*.5).toFixed(1));
+function hourOptions(values,current,{blank=false,custom=false}={}){const value=current===null||current===undefined?'':Number(current).toFixed(1),standard=values.includes(value);return `${blank?'<option value="">None / 无</option>':''}${values.map(item=>`<option value="${item}" ${value===item?'selected':''}>${item}</option>`).join('')}${custom?`<option value="custom" ${value&&!standard?'selected':''}>Custom / 自定义</option>`:''}`}
+async function loadManagerAttendanceRecords(){const root=document.querySelector('#manager-attendance-records');root.innerHTML='<p>Loading / 加载中…</p>';const response=await fetch('/api/manager/attendance?'+attendanceRecordQuery()),data=await response.json();if(!response.ok){root.innerHTML=`<p class="error">${escapeHtml(data.error)}</p>`;return}root.innerHTML=attendanceTable(['Staffing company / 劳务公司','Name / 姓名','Date / 日期','Clock in / 上班','Clock out / 下班','Paid break hours / 带薪休息','Total hours / 总工时','Overtime hours / 加班工时','Status / 状态','Manager note / 管理备注','Save / 保存'],data.records.map(row=>{const hasOvertime=row.overtime_hours!==null&&row.overtime_hours!==undefined&&row.overtime_hours!=='',overtime=Number(row.overtime_hours),customOvertime=hasOvertime&&Number.isFinite(overtime)&&!halfHourValues(.5,3).includes(overtime.toFixed(1));return `<tr data-id="${Number(row.id)}" data-version="${Number(row.row_version)}"><td>${escapeHtml(row.staffing_company)}</td><td>${escapeHtml(row.employee_name)}</td><td>${escapeHtml(row.attendance_date)}</td><td><input name="clock_in" type="datetime-local" value="${escapeHtml(row.clock_in||'')}"></td><td><input name="clock_out" type="datetime-local" value="${escapeHtml(row.clock_out||'')}"></td><td><select name="paid_break_hours">${hourOptions(halfHourValues(0,2),row.paid_break_hours)}</select></td><td><select name="total_hours">${hourOptions(halfHourValues(3,12),row.total_hours,{blank:true})}</select></td><td><select name="overtime_hours">${hourOptions(halfHourValues(.5,3),row.overtime_hours,{blank:true,custom:true})}</select><input name="overtime_hours_custom" class="overtime-custom" type="number" min="0.5" max="24" step="0.5" value="${customOvertime?overtime.toFixed(1):''}" placeholder="0.5" ${customOvertime?'':'hidden'}></td><td><select name="status">${['present','absent','leave','excused'].map(status=>`<option value="${status}" ${row.status===status?'selected':''}>${status}</option>`).join('')}</select></td><td><input name="manager_note" maxlength="1000" value="${escapeHtml(row.manager_note||'')}"></td><td><button type="button" class="primary save-attendance-record">Save / 保存</button></td></tr>`}));attendancePagination(document.querySelector('#attendance-record-pages'),data.page,data.total,next=>{attendanceRecordPage=next;loadManagerAttendanceRecords()})}
+function attendanceEmployeeQuery(){return new URLSearchParams({page:attendanceEmployeePage,...Object.fromEntries(new FormData(document.querySelector('#attendance-employee-search')))});}
+async function loadManagerAttendanceEmployees() {
+  const root = document.querySelector('#manager-attendance-employees');
+  root.innerHTML = '<p>Loading / 加载中…</p>';
+  const response = await fetch(
+    '/api/manager/attendance-employees?' + attendanceEmployeeQuery(),
+  );
+  const data = await response.json();
+  if (!response.ok) {
+    root.innerHTML = `<p class="error">${escapeHtml(data.error)}</p>`;
+    return;
+  }
+
+  attendanceEmployees = data.employees;
+  const rows = data.employees.map((row) => {
+    const awaitingSetup = Boolean(Number(row.pin_reset_required));
+    const pinStatus = awaitingSetup
+      ? '<small class="attendance-pin-status">Temporary / 待员工设置</small>'
+      : '';
+    const editLabel = awaitingSetup
+      ? 'Edit · awaiting setup / 编辑 · 待设置'
+      : 'Edit employee / 编辑员工';
+    return `<tr>
+      <td>${escapeHtml(row.staffing_company)}</td>
+      <td>${escapeHtml(row.employee_name)}</td>
+      <td>${escapeHtml(row.department)}</td>
+      <td>${escapeHtml(row.job_title)}</td>
+      <td>
+        <strong class="attendance-pin">
+          ${row.pin_code ? escapeHtml(row.pin_code) : 'Reset required / 需重置'}
+        </strong>
+        ${pinStatus}
+      </td>
+      <td>${row.is_active ? 'Active / 启用' : 'Inactive / 停用'}</td>
+      <td>
+        <button type="button" class="secondary edit-attendance-employee"
+                data-id="${Number(row.id)}">${editLabel}</button>
+        <button type="button" class="danger delete-attendance-employee"
+                data-id="${Number(row.id)}">Delete / 删除</button>
+      </td>
+    </tr>`;
+  });
+  root.innerHTML = attendanceTable(
+    [
+      'Staffing company / 劳务公司',
+      'Name / 姓名',
+      'Department / 部门',
+      'Job title / 职位',
+      'PIN / 密码',
+      'Status / 状态',
+      'Actions / 操作',
+    ],
+    rows,
+  );
+  attendancePagination(
+    document.querySelector('#attendance-employee-pages'),
+    data.page,
+    data.total,
+    (next) => {
+      attendanceEmployeePage = next;
+      loadManagerAttendanceEmployees();
+    },
+  );
+}
+function openAttendanceEmployee(row=null){const form=document.querySelector('#attendance-employee-form');form.reset();form.elements.is_active.checked=true;form.elements.employee_id.value=row?.id??'';form.elements.staffing_company.value=row?.staffing_company??'';form.elements.employee_name.value=row?.employee_name??'';form.elements.employee_department.value=row?.department??'Slurry';form.elements.job_title.value=row?.job_title??'';document.querySelector('#attendance-employee-title').textContent=row?'Edit employee / 编辑员工':'Add employee / 添加员工';document.querySelector('#attendance-employee-status').textContent='';document.querySelector('#attendance-employee-dialog').showModal()}
+async function generateAttendanceQr(){const status=document.querySelector('#attendance-qr-status'),image=document.querySelector('#attendance-qr-image'),urlLabel=document.querySelector('#attendance-qr-url'),base=document.querySelector('#attendance-base-url').value.trim().replace(/\/$/,'');status.textContent='Generating / 正在生成…';image.hidden=true;const response=await fetch('/attendance/qr?'+new URLSearchParams({base_url:base}));if(!response.ok){const data=await response.json();status.textContent=data.error;return}const blob=await response.blob(),url=URL.createObjectURL(blob),attendanceUrl=response.headers.get('X-Attendance-URL')||base+'/attendance';if(image.dataset.objectUrl)URL.revokeObjectURL(image.dataset.objectUrl);image.dataset.objectUrl=url;image.src=url;image.hidden=false;urlLabel.textContent=attendanceUrl;document.querySelector('#open-attendance-link').href=attendanceUrl;status.textContent='Scan with an employee phone, then test the displayed address. / 请用员工手机扫码并测试显示的网址。'}
+function initialiseAttendanceManager(){if(attendanceInitialised)return;attendanceInitialised=true;const base=document.querySelector('#attendance-base-url');base.value=location.origin;document.querySelectorAll('[data-attendance-tab]').forEach(button=>button.onclick=()=>{document.querySelectorAll('[data-attendance-tab]').forEach(item=>item.classList.toggle('active',item===button));document.querySelectorAll('[data-attendance-panel]').forEach(panel=>{const active=panel.dataset.attendancePanel===button.dataset.attendanceTab;panel.classList.toggle('active',active);panel.hidden=!active});if(button.dataset.attendanceTab==='records')loadManagerAttendanceRecords();if(button.dataset.attendanceTab==='employees')loadManagerAttendanceEmployees()});document.querySelector('#generate-attendance-qr').onclick=generateAttendanceQr;document.querySelector('#attendance-filter').onsubmit=event=>{event.preventDefault();attendanceRecordPage=1;loadManagerAttendanceRecords()};document.querySelector('#attendance-export').onclick=()=>location.assign('/api/manager/attendance-export?'+attendanceRecordQuery());document.querySelector('#attendance-employee-search').onsubmit=event=>{event.preventDefault();attendanceEmployeePage=1;loadManagerAttendanceEmployees()};document.querySelector('#new-attendance-employee').onclick=()=>openAttendanceEmployee();document.querySelector('#close-attendance-employee').onclick=()=>document.querySelector('#attendance-employee-dialog').close();const recordsRoot=document.querySelector('#manager-attendance-records');recordsRoot.onchange=event=>{if(event.target.name==='overtime_hours'){const custom=event.target.closest('td').querySelector('.overtime-custom');custom.hidden=event.target.value!=='custom';custom.required=event.target.value==='custom';if(!custom.hidden)custom.focus()}};recordsRoot.onclick=async event=>{if(!event.target.classList.contains('save-attendance-record'))return;const row=event.target.closest('tr'),payload={row_version:Number(row.dataset.version)};row.querySelectorAll('input,select').forEach(control=>payload[control.name]=control.value);if(payload.overtime_hours==='custom')payload.overtime_hours=payload.overtime_hours_custom;delete payload.overtime_hours_custom;const response=await fetch('/api/manager/attendance/'+row.dataset.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();say(response.ok?'Attendance record saved. / 考勤记录已保存。':data.error);if(response.ok)loadManagerAttendanceRecords()};document.querySelector('#manager-attendance-employees').onclick=async event=>{const id=Number(event.target.dataset.id),row=attendanceEmployees.find(item=>Number(item.id)===id);if(event.target.classList.contains('edit-attendance-employee'))openAttendanceEmployee(row);if(event.target.classList.contains('delete-attendance-employee')){if(!confirm(`Delete ${row.employee_name}? Employees with attendance history will be deactivated so records remain intact. / 删除该员工？如已有考勤记录，将停用员工并保留记录。`))return;const response=await fetch('/api/manager/attendance-employees/'+id,{method:'DELETE'}),data=await response.json();say(response.ok?`${data.message} / 员工已删除或停用。`:data.error);if(response.ok)loadManagerAttendanceEmployees()}};document.querySelector('#attendance-employee-form').onsubmit=async event=>{event.preventDefault();const payload=Object.fromEntries(new FormData(event.currentTarget)),id=payload.employee_id;delete payload.employee_id;payload.is_active=event.currentTarget.elements.is_active.checked;const response=await fetch(id?'/api/manager/attendance-employees/'+id:'/api/manager/attendance-employees',{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();document.querySelector('#attendance-employee-status').textContent=response.ok?'Employee saved. / 员工已保存。':data.error;if(response.ok){await loadManagerAttendanceEmployees();setTimeout(()=>document.querySelector('#attendance-employee-dialog').close(),350)}}}
 
 function show(viewId, recordHistory = true) {
   const currentView = viewHistory[viewHistoryIndex];
@@ -458,11 +533,32 @@ const defaultReportColumns = {
   production: new Set(['shift_name','machine_code','formula_code','batch_number','planned_quantity','actual_quantity','qualified_quantity','achievement_rate','qualified_rate']),
   events: new Set(['machine_type','event_time','event_type','description','is_resolved','responsible_person','target_finish_date','actual_finish_date']),
 };
+const reportColumnStorageKey = `gnem.report-columns.${department}`;
+function savedReportColumnKeys(group) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(reportColumnStorageKey) || '{}');
+    return Array.isArray(saved[group]) ? new Set(saved[group]) : null;
+  } catch { return null; }
+}
+function saveReportColumnPreferences() {
+  const preferences = {};
+  for (const group of ['production','events']) {
+    const id = group === 'production' ? 'production-report-columns' : 'event-report-columns';
+    preferences[group] = [...document.querySelectorAll(`#${id} input:checked`)].map(input => input.value);
+  }
+  try { localStorage.setItem(reportColumnStorageKey, JSON.stringify(preferences)); }
+  catch { say('This browser could not save report column preferences. / 浏览器无法保存报告列设置。'); }
+}
 function initialiseReportColumnPicker() {
   [['production','#production-report-columns'],['events','#event-report-columns']].forEach(([group, selector]) => {
     const root = document.querySelector(selector);
     if (!root) return;
-    root.innerHTML = reportColumnDefinitions[group].map(([key,label]) => `<label><input type="checkbox" value="${escapeHtml(key)}" ${defaultReportColumns[group].has(key) ? 'checked' : ''}>${escapeHtml(label)}</label>`).join('');
+    const saved = savedReportColumnKeys(group), selected = saved || defaultReportColumns[group];
+    root.innerHTML = reportColumnDefinitions[group].map(([key,label]) => `<label><input type="checkbox" value="${escapeHtml(key)}" ${selected.has(key) ? 'checked' : ''}>${escapeHtml(label)}</label>`).join('');
+    if (!root.dataset.preferenceListener) {
+      root.dataset.preferenceListener = '1';
+      root.addEventListener('change', saveReportColumnPreferences);
+    }
   });
 }
 function selectedReportColumns(group) {
@@ -487,10 +583,11 @@ async function loadDailyReport() {
       say(data.error || 'Unable to generate report / 无法生成报告。');
       return;
     }
-    document.querySelector('#report-date-label').textContent = `Report date / 报告日期: ${data.report_date}`;
+    const machine = isSlitting ? document.querySelector('#slitting-report-machine')?.value || '' : '';
+    document.querySelector('#report-date-label').textContent = `Report date / 报告日期: ${data.report_date}${machine ? ` · Machine / 机台: ${machine}` : ''}`;
     const productionColumns = selectedReportColumns('production'), eventColumns = selectedReportColumns('events');
     if (!productionColumns.length || !eventColumns.length) { say('Select at least one Production column and one Event column. / 生产数据和事件明细请各选择至少一列。'); return; }
-    if (isSlitting) await loadSlittingDailyReport(data.events, dateInput.value);
+    if (isSlitting) await loadSlittingDailyReport(data.events, dateInput.value, machine);
     else renderReportTable('#report-production', data.production, productionColumns);
     if (!isSlitting) renderReportTable('#report-events', data.events, eventColumns);
     document.querySelector('#report-sheet').hidden = false;
@@ -787,7 +884,7 @@ async function fillHomeTaskEditor() {
 }
 
 document.querySelector('#edit-home-task').addEventListener('click', async () => {
-  try { await fillHomeTaskEditor(); document.querySelector('#home-task-dialog').showModal(); }
+  try { if(isSlitting&&window.refreshSlittingOptions)await window.refreshSlittingOptions();else if(isSlitting&&window.slittingOptionsReady)await window.slittingOptionsReady;await fillHomeTaskEditor(); document.querySelector('#home-task-dialog').showModal(); }
   catch (error) { say(error.message); }
 });
 document.querySelector('#close-home-task').addEventListener('click', () => document.querySelector('#home-task-dialog').close());
@@ -902,7 +999,10 @@ document.querySelector('#standard-field-form').addEventListener('submit', async 
   });
   const data = await response.json();
   say(response.ok ? data.message : data.error);
-  if (response.ok) loadManagerStandardFields(payload.form_key);
+  if (response.ok) {
+    loadManagerStandardFields(payload.form_key);
+    if (isSlitting) setTimeout(() => location.reload(), 450);
+  }
 });
 let managerFields = [];
 async function loadManagerFields(formKey) {
@@ -1010,6 +1110,9 @@ document.querySelector('#manager-record-edit').addEventListener('submit', async 
   event.preventDefault();
   if (!managerRecordContext) return;
   const payload = Object.fromEntries(new FormData(event.currentTarget));
+  if (typeof payload.custom_fields === 'string') {
+    try { payload.custom_fields = JSON.parse(payload.custom_fields); } catch { payload.custom_fields = {}; }
+  }
   const editing = Boolean(managerRecordContext.id);
   const path = editing
     ? `/api/manager/records/${managerRecordContext.type}/${managerRecordContext.id}`

@@ -23,6 +23,7 @@ def test_slurry_does_not_receive_slitting_inventory_migrations():
     names = [path.name for path in MIGRATIONS.migration_paths("slurry")]
     assert "001_initial_schema.sql" in names
     assert "003_slitting_department.sql" not in names
+    assert "027_attendance_system.sql" in names
 
 
 def test_import_schema_is_rewritten_and_validated():

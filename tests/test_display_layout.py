@@ -14,17 +14,42 @@ def test_slitting_display_uses_all_open_event_feed():
     assert "openData.ongoing_events" in source
 
 
+def test_live_display_keeps_widths_but_allows_content_height():
+    root = Path(__file__).parents[1]
+    for filename in ("display.js", "slitting-display.js"):
+        source = (root / "app" / "static" / filename).read_text(encoding="utf-8")
+        assert "style.gridColumn=`span" in source
+        assert "style.gridRow='auto'" in source
+        assert "--block-height" in source
+        assert "startAutomaticOverflowCycle" in source
+        assert "adaptDisplayBlocks" in source
+        assert "requestAnimationFrame(frame)" in source
+        assert "pixelsPerSecond" in source
+
+
 def test_department_specific_five_column_defaults():
     with Flask(__name__).app_context():
         settings = records.default_display_settings()
-        assert [block["key"] for block in settings["blocks"]] == ["task", "rates", "pending_qualification", "ongoing"]
+        assert [block["key"] for block in settings["blocks"]] == ["task", "rates", "pending_qualification", "production_trend", "abnormality_trend", "ongoing"]
         assert settings["event_columns"] == []
         with department_context("slitting"):
             settings = records.default_display_settings()
-            assert [block["key"] for block in settings["blocks"]] == ["slitting_task", "slitting_training", "slitting_events"]
+            assert [block["key"] for block in settings["blocks"]] == ["slitting_task", "slitting_events"]
             assert next(block for block in settings["blocks"] if block["key"] == "slitting_task")["width"] == 3
-            assert next(block for block in settings["blocks"] if block["key"] == "slitting_training")["width"] == 2
             assert next(block for block in settings["blocks"] if block["key"] == "slitting_events")["width"] == 5
+
+
+def test_slurry_abnormality_chart_uses_stacked_downtime_and_exclusions():
+    root = Path(__file__).parents[1]
+    service_source = (root / "app" / "services" / "records.py").read_text(encoding="utf-8")
+    chart_source = (root / "app" / "static" / "display.js").read_text(encoding="utf-8")
+    assert "SUM(reports.duration_minutes)" in service_source
+    assert "'cleaning', 'normal production'" in service_source
+    assert "categories" in chart_source and "chart-stack-segment" in chart_source
+    assert "categoryIndex" in chart_source
+    assert "chart-category-legend" in chart_source
+    assert "direction === 'down' ? limit : 0" in chart_source
+    assert "direction === 'down' ? 'up' : 'down'" in chart_source
 
 
 def test_slitting_standard_fields_use_slitting_catalog(monkeypatch):
@@ -65,6 +90,7 @@ def test_slitting_daily_task_requires_overview_and_schedule(monkeypatch):
         yield Cursor()
 
     monkeypatch.setattr(records, "transaction", fake_transaction)
+    monkeypatch.setattr(records.slitting, "machine_choices", lambda form_key='production': [{"value": machine, "label": machine} for machine in records.slitting.MACHINES])
     payload = {"task_items": [
         {"type": "slitting_production", "product_item": "88.8MM", "production_status": "production_in_progress", "production_target": 150, "target_unit": "sr", "custom_unit": ""},
         {"type": "slitting_schedule", "machine": "FX4", "product_item": "88.8 mm", "planned_input": "150 sr", "operator": "Operator A", "shift_lead": "Lead A"},
@@ -88,6 +114,7 @@ def test_slitting_custom_product_and_training_are_saved(monkeypatch):
         yield Cursor()
 
     monkeypatch.setattr(records, "transaction", fake_transaction)
+    monkeypatch.setattr(records.slitting, "machine_choices", lambda form_key='production': [{"value": machine, "label": machine} for machine in records.slitting.MACHINES])
     payload = {"task_items": [
         {"type": "slitting_production", "product_item": "CUSTOM", "custom_product_item": "Cleaning", "production_status": "production_in_progress", "production_target": 2, "target_unit": "custom", "custom_unit": "hours"},
         {"type": "slitting_schedule", "machine": "FX4", "product_item": "CUSTOM", "custom_product_item": "Cleaning", "planned_input": "2 hours", "operator": "Operator A", "shift_lead": "Lead A"},

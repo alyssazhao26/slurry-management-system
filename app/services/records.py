@@ -768,11 +768,12 @@ DISPLAY_BLOCK_DEFAULTS = [
     {"key": "task", "title": "Today's task / 今日任务", "visible": True, "order": 10, "width": 2, "height": 2, "font_size": 16},
     {"key": "rates", "title": "Production rates / 生产率", "visible": True, "order": 20, "width": 1, "height": 1, "font_size": 16},
     {"key": "pending_qualification", "title": "Pending qualification data / 待补录合格数据", "visible": True, "order": 25, "width": 1, "height": 1, "font_size": 16},
+    {"key": "production_trend", "title": "7-day production / 7日生产趋势", "visible": True, "order": 30, "width": 3, "height": 2, "font_size": 15},
+    {"key": "abnormality_trend", "title": "Abnormalities by date / 每日异常", "visible": True, "order": 35, "width": 2, "height": 2, "font_size": 15},
     {"key": "ongoing", "title": "Ongoing abnormalities / 进行中异常", "visible": True, "order": 40, "width": 5, "height": 2, "font_size": 16},
 ]
 SLITTING_DISPLAY_BLOCK_DEFAULTS = [
     {"key": "slitting_task", "title": "Slitting task overview / 分切及包装任务概览", "visible": True, "order": 5, "width": 3, "height": 3, "font_size": 14},
-    {"key": "slitting_training", "title": "Training / 培训", "visible": True, "order": 6, "width": 2, "height": 3, "font_size": 13},
     {"key": "slitting_events", "title": "Ongoing abnormalities / 进行中异常", "visible": True, "order": 10, "width": 5, "height": 2, "font_size": 16},
 ]
 DISPLAY_EVENT_COLUMN_DEFAULTS = [
@@ -989,7 +990,7 @@ def save_daily_task(payload, actor_id=None):
                 planned_input = str(raw_item.get("planned_input", "")).strip()
                 operator = str(raw_item.get("operator", "")).strip()
                 shift_lead = str(raw_item.get("shift_lead", "")).strip()
-                if machine not in slitting.MACHINES: raise ValueError("Choose a listed Slitting machine.")
+                if machine not in {choice["value"] for choice in slitting.machine_choices("production")}: raise ValueError("Choose a configured Slitting machine.")
                 if product_item == "CUSTOM":
                     if not custom_product_item or len(custom_product_item) > 120: raise ValueError("Enter a custom scheduled product item of 120 characters or fewer.")
                     product_item = custom_product_item
@@ -1201,6 +1202,33 @@ def public_display_summary(record_date=None):
             """
         )
         ongoing_events = cursor.fetchall()
+        cursor.execute(
+            """
+            SELECT record_date, COALESCE(SUM(planned_quantity), 0) AS planned,
+                   COALESCE(SUM(actual_quantity), 0) AS actual
+            FROM system_import.production_records
+            WHERE record_date BETWEEN DATE_SUB(%s, INTERVAL 6 DAY) AND %s
+            GROUP BY record_date ORDER BY record_date
+            """,
+            (selected_date, selected_date),
+        )
+        production_trend_rows = cursor.fetchall()
+        cursor.execute(
+            """
+            SELECT reports.event_date, reports.event_type,
+                   COALESCE(options.display_name, reports.event_type) AS category_label,
+                   COALESCE(SUM(reports.duration_minutes), 0) AS minutes
+            FROM system_import.abnormality_reports AS reports
+            LEFT JOIN system_import.event_type_options AS options
+              ON options.event_value = reports.event_type
+            WHERE reports.event_date BETWEEN DATE_SUB(%s, INTERVAL 6 DAY) AND %s
+              AND LOWER(TRIM(reports.event_type)) NOT IN ('cleaning', 'normal production')
+            GROUP BY reports.event_date, reports.event_type, options.display_name
+            ORDER BY reports.event_date, category_label
+            """,
+            (selected_date, selected_date),
+        )
+        abnormality_trend_rows = cursor.fetchall()
 
     if daily_task:
         daily_task["task_items"] = json.loads(daily_task["task_items"] or "null") or _legacy_task_items(daily_task)
@@ -1226,6 +1254,21 @@ def public_display_summary(record_date=None):
         for row in pending_qualifications:
             row['actual_quantity'] = row['input_rolls'] * row['stations']
         ongoing_events = [slitting.enrich(row) for row in ongoing_events]
+    production_by_date = {row["record_date"]: row for row in production_trend_rows}
+    abnormality_by_date = {}
+    for row in abnormality_trend_rows:
+        abnormality_by_date.setdefault(row["event_date"], []).append({
+            "type": row["event_type"],
+            "label": row["category_label"],
+            "minutes": float(row["minutes"] or 0),
+        })
+    trend_dates = [selected_date - timedelta(days=offset) for offset in range(6, -1, -1)]
+    production_trend = [{"date": day.isoformat(), "planned": float(production_by_date.get(day, {}).get("planned", 0) or 0), "actual": float(production_by_date.get(day, {}).get("actual", 0) or 0)} for day in trend_dates]
+    abnormality_trend = [{
+        "date": day.isoformat(),
+        "total_minutes": sum(segment["minutes"] for segment in abnormality_by_date.get(day, [])),
+        "categories": abnormality_by_date.get(day, []),
+    } for day in trend_dates]
     return {
         "display_date": selected_date.isoformat(),
         "daily_task": _json_safe_rows([daily_task])[0],
@@ -1241,6 +1284,7 @@ def public_display_summary(record_date=None):
         "machines": _json_safe_rows(machines),
         "event_tracker": _json_safe_rows(event_tracker),
         "ongoing_events": _json_safe_rows(ongoing_events),
+        "trends": {"production": production_trend, "abnormalities": abnormality_trend},
         "display_settings": get_display_settings(),
         "last_updated": latest.isoformat(sep=" ", timespec="seconds") if latest else None,
     }

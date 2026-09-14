@@ -1,4 +1,6 @@
 let slittingOptions = null;
+let slittingCustomFields = [];
+let slittingStandardFields = [];
 const slittingFields = [
  ['planned_rolls','Planned input rolls / 计划卷数','1'],['input_rolls','Input rolls / 投入卷数','1'],
  ['qualified_rolls','Qualified output rolls / 合格产出卷数','1'],['width_m','Slit width (m) / 分切宽度（米）','0.0001'],
@@ -17,6 +19,8 @@ function slittingStats(stats) {
  return `<div class="slitting-stats">${items.map(([key,label])=>`<article><span>${label}</span><strong>${stats[key] == null ? '—' : key.endsWith('_rate') ? (Number(stats[key])*100).toFixed(2)+'%' : Number(stats[key]).toLocaleString(undefined,{maximumFractionDigits:2})+(key==='records'?'':' m²')}</strong>${key==='qualified_quantity'&&stats.pending?'<small>Partial: '+stats.pending+' pending / 待补录</small>':''}</article>`).join('')}</div>${stats.pending?'<p>Qualification and yield pending / 合格率与综收待补录完成。</p>':''}`;
 }
 function slittingReport(data, editable=true, columns=slittingRecordColumns) {
+ const customColumns=(data.custom_field_definitions||slittingCustomFields).map(field=>[field.field_key,field.label]);
+ if(editable) columns=[...columns,...customColumns.filter(([key])=>!columns.some(([existing])=>existing===key))];
  const calculationSummary=editable?'':`<h2>Overall production / 生产总览</h2>${slittingStats(data.overall)}${data.legacy_records?`<p class="slitting-summary-note">${data.legacy_records} legacy records have no slitting dimensions and are excluded from area totals. / 旧记录缺少尺寸，未计入面积统计。</p>`:''}`;
  return calculationSummary+data.machines.map(machine=>`<section class="slitting-machine"><h2>${escapeHtml(machine.machine_code)}</h2>${editable?'':slittingStats(machine.stats)}<div class="table-wrap"><table><thead><tr>${columns.map(([,label])=>'<th>'+label+'</th>').join('')}${editable?'<th>Actions / 操作</th>':''}</tr></thead><tbody>${machine.records.map(row=>`<tr>${columns.map(([key])=>'<td>'+escapeHtml(row[key]==null?'—':key.endsWith('_rate')?(Number(row[key])*100).toFixed(2)+'%':typeof row[key]==='number'?Number(row[key]).toLocaleString(undefined,{maximumFractionDigits:4}):row[key])+'</td>').join('')}${editable?`<td><button class="secondary manager-edit-row" data-record-type="production" data-record-id="${Number(row.id)}">Edit / 编辑</button>${row.qualified_quantity==null?`<button class="secondary qualified-followup" data-id="${Number(row.id)}" data-date="${escapeHtml(row.record_date)}" data-machine="${escapeHtml(row.machine_code)}">Add qualified rolls / 补录合格卷数</button>`:''}</td>`:''}</tr>`).join('')}</tbody></table></div></section>`).join('')+(!data.machines.length?'<p>No slitting production for this selection / 当前筛选暂无分切生产记录。</p>':'');
 }
@@ -40,13 +44,15 @@ function slittingEventTimeline(events) {
  if(!events.length)return '<p class="share-empty">No abnormalities recorded / 今日无异常记录</p>';
  return `<div class="abnormality-timeline">${events.map(event=>`<article class="timeline-event ${event.is_resolved==='no'?'timeline-open':''}"><time>${escapeHtml(event.event_time||'—')}</time><div><strong>${escapeHtml(event.machine_code)} · ${escapeHtml(event.event_type)}</strong><span>${escapeHtml(event.subcategory||event.description||'—')}</span>${event.event_notes?`<p>${escapeHtml(event.event_notes)}</p>`:''}</div><aside><strong>${Number(event.duration_minutes)||0} min</strong><span>${event.is_resolved==='yes'?'Closed / 已完成':'Open / 处理中'}</span></aside></article>`).join('')}</div>`;
 }
-async function loadSlittingDailyReport(events, selectedDate) {
- const response=await fetch('/api/slitting/summary?'+new URLSearchParams({date:selectedDate}));const data=await response.json();
+async function loadSlittingDailyReport(events, selectedDate, machine='') {
+ const params={date:selectedDate};if(machine)params.machine=machine;
+ const response=await fetch('/api/slitting/summary?'+new URLSearchParams(params));const data=await response.json();
  if(!response.ok)throw new Error(data.error||'Could not load slitting production.');
- window.latestSlittingReport={production:data,events,date:selectedDate};
+ const filteredEvents=machine?events.filter(event=>event.machine_code===machine):events;
+ window.latestSlittingReport={production:data,events:filteredEvents,date:selectedDate,machine};
  const overall=data.overall,rolls=(data.records||[]).reduce((totals,row)=>({planned:totals.planned+Number(row.planned_rolls||0),input:totals.input+Number(row.input_rolls||0),qualified:totals.qualified+Number(row.qualified_rolls||0)}),{planned:0,input:0,qualified:0});
  document.querySelector('#report-production').innerHTML=`<div class="share-kpis slitting-overview-kpis"><article><span>Planned rolls / 计划卷数</span><strong>${compactNumber(rolls.planned,0)}</strong></article><article><span>Input rolls / 投入卷数</span><strong>${compactNumber(rolls.input,0)}</strong></article><article><span>Qualified rolls / 合格卷数</span><strong>${compactNumber(rolls.qualified,0)}</strong></article><article><span>Output / 产出</span><strong>${compactNumber(overall.actual_quantity)} m²</strong></article><article><span>Plan attainment / 达成率</span><strong>${compactPercent(overall.achievement_rate)}</strong></article><article><span>Qualified rate / 合格率</span><strong>${compactPercent(overall.qualified_rate)}</strong></article><article><span>Yield / 综收</span><strong>${compactPercent(overall.yield_rate)}</strong></article></div><div class="share-machine-list">${data.machines.map(slittingMachineShareCard).join('')||'<p class="share-empty">No production recorded / 今日无生产记录</p>'}</div>`;
- document.querySelector('#report-events').innerHTML=slittingEventTimeline(events);
+ document.querySelector('#report-events').innerHTML=slittingEventTimeline(filteredEvents);
 }
 
 function canvasRoundedRect(context,x,y,width,height,radius,fill,stroke=null) {
@@ -74,7 +80,7 @@ async function saveSlittingReportImage() {
  if(height>30000)throw new Error('Report is too long for one image.');
  const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;const context=canvas.getContext('2d');
  context.fillStyle='#f5f9fb';context.fillRect(0,0,width,height);
- canvasText(context,'GNEM Slitting Daily Report / GNEM 分切日报',margin,34,{size:30,weight:800,color:'#063b5c'});
+ canvasText(context,`GNEM Slitting Daily Report / GNEM 分切日报${report.machine?' · '+report.machine:''}`,margin,34,{size:30,weight:800,color:'#063b5c'});
  canvasText(context,report.date,width-margin,42,{size:20,weight:600,color:'#4c6575',align:'right'});
  context.fillStyle='#063b5c';context.fillRect(margin,84,width-margin*2,3);
  const overall=report.production.overall;
@@ -97,7 +103,7 @@ async function saveSlittingReportImage() {
  if(!report.events.length){canvasRoundedRect(context,margin,y,width-margin*2,54,8,'#ffffff','#b9ced8');canvasText(context,'No abnormalities recorded / 今日无异常记录',margin+18,y+17,{size:15,color:'#526977'});y+=70;}
  report.events.forEach(event=>{const open=event.is_resolved==='no';canvasRoundedRect(context,margin,y,width-margin*2,64,8,open?'#fff6dc':'#ffffff','#b9ced8');context.fillStyle=open?'#d18a00':'#168a85';context.fillRect(margin,y,5,64);canvasText(context,event.event_time||'—',margin+18,y+18,{size:15,weight:800,maxWidth:135});canvasText(context,`${event.machine_code} · ${event.event_type}`,margin+170,y+10,{size:15,weight:800,maxWidth:430});canvasText(context,event.subcategory||event.description||'—',margin+170,y+34,{size:13,color:'#526977',maxWidth:520});canvasText(context,event.event_notes||'',margin+720,y+20,{size:13,color:'#334d5c',maxWidth:440});canvasText(context,`${Number(event.duration_minutes)||0} min`,width-margin-120,y+12,{size:16,weight:800,align:'right'});canvasText(context,open?'Open / 处理中':'Closed / 已完成',width-margin-18,y+37,{size:12,color:open?'#8a5b00':'#23715e',align:'right'});y+=76;});
  canvasText(context,'Generated by GNEM / GNEM 系统生成',width-margin,height-28,{size:11,color:'#748792',align:'right'});
- await downloadCanvas(canvas,`GNEM-slitting-${report.date}-daily-report.png`);
+ await downloadCanvas(canvas,`GNEM-slitting-${report.machine||'all-machines'}-${report.date}-daily-report.png`);
 }
 function populateSubcategories(form, selected='') {
  const select=form.elements.subcategory;if(!select||!slittingOptions)return;
@@ -129,15 +135,17 @@ async function refreshSlittingOptions(){
  const response=await fetch('/api/slitting/options');if(!response.ok)throw Error();slittingOptions=await response.json();renderSlittingCategoryEditor();return slittingOptions;
 }
 function modelSelectMarkup(selected='',name='formula_code') { return `<label>Model / 型号<select name="${name}" required><option value="">Select model / 选择型号</option>${(slittingOptions?.models||[]).map(model=>`<option value="${escapeHtml(model)}" ${model===selected?'selected':''}>${escapeHtml(model)}</option>`).join('')}</select></label>`; }
+function configuredSelectKind(choices){return 'select:'+choices.map(choice=>`${choice.value}|${choice.label}`).join(',')}
 function openSlittingEditor(type,record=null) {
  if(!slittingOptions){say('Slitting options are still loading.');return;}
  managerRecordContext={type,id:record?.id||null};
  document.querySelector('#manager-record-dialog-title').textContent=(record?'Edit / 编辑':'Add / 添加')+' · Slitting / 分切';
  const root=document.querySelector('#manager-record-edit-fields');
  if(type==='production'){
-  root.innerHTML=[['shift_name','Shift / 班次','select:Day|Day / 白班,Night|Night / 夜班'],['machine_code','Machine / 机台','select:'+slittingOptions.machines.map(m=>m+'|'+m).join(',')]].map(([k,l,t])=>managerEditControl(k,l,t,record?.[k])).join('')+modelSelectMarkup(record?.formula_code)+slittingInputMarkup(record||{});
+  const labels=Object.fromEntries(slittingStandardFields.map(field=>[field.field_key,field.label]));
+  root.innerHTML=[['shift_name',labels.shift_name||'Shift / 班次',configuredSelectKind(slittingOptions.production_shift_options)],['machine_code',labels.machine_code||'Machine / 机台',configuredSelectKind(slittingOptions.machine_options)]].map(([k,l,t])=>managerEditControl(k,l,t,record?.[k])).join('')+modelSelectMarkup(record?.formula_code)+slittingInputMarkup(record||{})+slittingCustomFields.map(field=>renderInput({...field,value:record?.[field.field_key]})).join('');
  }else{
-  root.innerHTML=managerEditableFields.abnormality.map(([k,l,t])=>managerEditControl(k,l,t,record?.[k])).join('');
+  root.innerHTML=managerEditableFields.abnormality.map(([k,l,t])=>managerEditControl(k,l,k==='machine_code'?configuredSelectKind(slittingOptions.abnormality_machine_options):k==='shift_name'?configuredSelectKind(slittingOptions.abnormality_shift_options):t,record?.[k])).join('');
   categoryControls(document.querySelector('#manager-record-edit'),record);
  }
  document.querySelector('#manager-record-edit-status').textContent='';document.querySelector('#manager-record-dialog').showModal();
@@ -180,12 +188,24 @@ if(isSlitting){
  defaultReportColumns.events.add('subcategory');defaultReportColumns.events.add('event_notes');initialiseReportColumnPicker();
  // Loading options gates submission instead of briefly showing slurry defaults.
  form.querySelector('button:not([type])').disabled=true;abnormalityForm.querySelector('button:not([type])').disabled=true;
- fetch('/api/slitting/options').then(async response=>{if(!response.ok)throw Error();slittingOptions=await response.json();renderSlittingCategoryEditor();
-  for(const f of [form,abnormalityForm])f.elements.machine_code.innerHTML='<option value="">Select machine / 选择机台</option>'+slittingOptions.machines.map(m=>'<option>'+m+'</option>').join('')+(f===abnormalityForm?'<option value="NA">NA / 不适用</option>':'');
+ async function refreshSlittingOptions(){
+  const responses=await Promise.all([fetch('/api/slitting/options',{cache:'no-store'}),fetch('/api/forms/production',{cache:'no-store'}),fetch('/api/forms/production/standard-fields',{cache:'no-store'})]);if(responses.some(response=>!response.ok))throw Error();slittingOptions=await responses[0].json();slittingCustomFields=(await responses[1].json()).fields||[];slittingStandardFields=(await responses[2].json()).fields||[];renderSlittingCategoryEditor();
+  taskMachineOptions.splice(0,taskMachineOptions.length,...slittingOptions.machine_options.map(choice=>choice.value));
+  const reportMachine=document.querySelector('#slitting-report-machine');if(reportMachine)reportMachine.innerHTML='<option value="">All machines / 所有机台</option>'+slittingOptions.machine_options.map(choice=>`<option value="${escapeHtml(choice.value)}">${escapeHtml(choice.label)}</option>`).join('');
+  for(const f of [form,abnormalityForm]){const machineChoices=f===abnormalityForm?slittingOptions.abnormality_machine_options:slittingOptions.machine_options,shiftChoices=f===abnormalityForm?slittingOptions.abnormality_shift_options:slittingOptions.production_shift_options;f.elements.machine_code.innerHTML='<option value="">Select machine / 选择机台</option>'+machineChoices.map(choice=>`<option value="${escapeHtml(choice.value)}">${escapeHtml(choice.label)}</option>`).join('');f.elements.shift_name.innerHTML=shiftChoices.map(choice=>`<option value="${escapeHtml(choice.value)}">${escapeHtml(choice.label)}</option>`).join('');}
   form.elements.slitting_model.innerHTML='<option value="">Select model / 选择型号</option>'+slittingOptions.models.map(model=>`<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join('');
+  const labels=Object.fromEntries(slittingStandardFields.map(field=>[field.field_key,field]));
+  slittingStandardFields.forEach(setting=>{const recordKey=setting.field_key==='slitting_model'?'formula_code':setting.field_key;for(const group of [slittingFields,slittingColumns,slittingRecordColumns]){const field=group.find(([key])=>key===recordKey);if(field)field[1]=setting.label;}});
+  [['shift_name',form.elements.shift_name],['machine_code',form.elements.machine_code],['slitting_model',form.elements.slitting_model],['planned_rolls',form.elements.planned_rolls],['input_rolls',form.elements.input_rolls],['qualified_rolls',form.elements.qualified_rolls]].forEach(([key,control])=>{const setting=labels[key];if(setting&&control){replaceLabelText(control.closest('label'),setting.label);if(setting.help_text){let help=control.closest('label').querySelector('small');if(!help){help=document.createElement('small');control.closest('label').append(help);}help.textContent=setting.help_text;}}});
+  const customReportColumns=slittingCustomFields.map(field=>[field.field_key,field.label]);
+  reportColumnDefinitions.production.push(...customReportColumns.filter(([key])=>!reportColumnDefinitions.production.some(([existing])=>existing===key)));
+  customReportColumns.forEach(([key])=>defaultReportColumns.production.add(key));initialiseReportColumnPicker();
   categoryControls(abnormalityForm);
   form.querySelector('button:not([type])').disabled=false;abnormalityForm.querySelector('button:not([type])').disabled=false;
- }).catch(()=>say('Slitting options unavailable. Refresh before submitting. / 分切选项加载失败，请刷新。'));
+  return slittingOptions;
+ }
+ window.refreshSlittingOptions=refreshSlittingOptions;
+ window.slittingOptionsReady=refreshSlittingOptions().catch(()=>{say('Slitting options unavailable. Refresh before submitting. / 分切选项加载失败，请刷新。');throw Error('Slitting options unavailable.');});
  const categoryEditor=document.querySelector('#slitting-category-form');
  categoryEditor.elements.existing_main_category.addEventListener('change',event=>{categoryEditor.elements.new_main_category.disabled=Boolean(event.target.value);if(event.target.value)categoryEditor.elements.new_main_category.value='';});
  categoryEditor.addEventListener('submit',async event=>{event.preventDefault();const existing=categoryEditor.elements.existing_main_category.value,newMain=categoryEditor.elements.new_main_category.value.trim(),subcategory=categoryEditor.elements.subcategory.value.trim(),status=document.querySelector('#slitting-category-status');const main=existing||newMain;if(!main){status.textContent='Choose or enter a main category. / 请选择或输入主类别。';return;}const response=await fetch('/api/manager/slitting-event-categories',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({main_category:main,subcategory})}),data=await response.json();status.textContent=response.ok?`${data.message} / 类别组合已保存。`:data.error;if(response.ok){categoryEditor.reset();categoryEditor.elements.new_main_category.disabled=false;await refreshSlittingOptions();}});
@@ -195,3 +215,11 @@ if(isSlitting){
  modelForm.elements.existing_model.addEventListener('change',event=>fillSlittingModelForm(slittingModelRows.find(row=>Number(row.id)===Number(event.target.value))||null));
  modelForm.addEventListener('submit',async event=>{event.preventDefault();const payload=Object.fromEntries(new FormData(modelForm));payload.is_active=modelForm.elements.is_active.checked;const response=await fetch('/api/manager/slitting-models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();document.querySelector('#slitting-model-status').textContent=response.ok?`${data.message} / 型号参数已保存。`:data.error;if(response.ok){const selected=form.elements.slitting_model.value,optionsResponse=await fetch('/api/slitting/options');slittingOptions=await optionsResponse.json();form.elements.slitting_model.innerHTML='<option value="">Select model / 选择型号</option>'+slittingOptions.models.map(model=>`<option value="${escapeHtml(model)}" ${model===selected?'selected':''}>${escapeHtml(model)}</option>`).join('');await loadSlittingModelEditor();}});
 }
+
+// Manager edits use the same custom-field storage contract as operator forms.
+document.querySelector('#manager-record-edit').addEventListener('formdata',event=>{
+ if(!isSlitting||managerRecordContext?.type!=='production')return;
+ const values=Object.fromEntries(event.formData);
+ const custom={};slittingCustomFields.forEach(field=>{if(Object.hasOwn(values,field.field_key))custom[field.field_key]=values[field.field_key];});
+ event.formData.set('custom_fields',JSON.stringify(custom));
+});

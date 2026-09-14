@@ -15,6 +15,41 @@ CATEGORIES = {
 }
 NUMBERS = ['width_m','coated_length_m','coated_width_m','stations','slitting_length_m','planned_rolls','input_rolls','qualified_rolls']
 
+def field_choices(form_key, field_key, defaults):
+    """Return manager-configured saved values and labels, falling back to defaults."""
+    with transaction() as cursor:
+        cursor.execute("SELECT options_json FROM system_import.standard_field_settings WHERE form_key=%s AND field_key=%s", (form_key, field_key))
+        row = cursor.fetchone()
+    raw = row.get('options_json') if row else None
+    if isinstance(raw, str):
+        try: raw = json.loads(raw)
+        except (TypeError, ValueError): raw = None
+    values = raw if isinstance(raw, list) and raw else defaults
+    choices = []
+    for item in values:
+        value, separator, label = str(item).partition('|')
+        value = value.strip()
+        if value and value not in {choice['value'] for choice in choices}:
+            choices.append({'value': value, 'label': label.strip() if separator and label.strip() else value})
+    return choices
+
+def machine_choices(form_key='production'):
+    defaults = MACHINES + (['NA|NA / 不适用'] if form_key == 'abnormality' else [])
+    choices = field_choices(form_key, 'machine_code', defaults)
+    # A machine is a shared Slitting resource. Managers may edit it from either
+    # form, so merge both saved lists instead of allowing the task scheduler,
+    # production form, and event form to drift apart.
+    other_form = 'abnormality' if form_key == 'production' else 'production'
+    for choice in field_choices(other_form, 'machine_code', []):
+        if choice['value'] != 'NA' and choice['value'] not in {item['value'] for item in choices}:
+            choices.append(choice)
+    if form_key == 'abnormality' and not any(choice['value'] == 'NA' for choice in choices):
+        choices.append({'value': 'NA', 'label': 'NA / 不适用'})
+    return choices
+
+def shift_choices(form_key='production'):
+    return field_choices(form_key, 'shift_name', ['Day|Day / 白班', 'Night|Night / 夜班'])
+
 def event_categories():
     with transaction() as cursor:
         cursor.execute("SELECT main_category, subcategory FROM system_import.slitting_event_categories WHERE is_active=TRUE ORDER BY display_order, id")
@@ -104,11 +139,11 @@ def normalise_production(payload, existing=None):
     if clean['qualified_rolls'] is not None and clean['qualified_rolls'] > clean['input_rolls'] * clean['stations']:
         raise ValueError('Qualified output rolls cannot exceed input rolls × stations.')
     machine = str(values.get('machine_code', (existing or {}).get('machine_code', ''))).strip()
-    if machine not in MACHINES: raise ValueError('Choose a slitting machine.')
+    if machine not in {choice['value'] for choice in machine_choices('production')}: raise ValueError('Choose a configured slitting machine.')
     batch = str(values.get('batch_number', (existing or {}).get('batch_number', ''))).strip() or ('AUTO-' + uuid4().hex[:16].upper())
     if not model or len(model) > 50: raise ValueError('Enter a model (up to 50 characters).')
-    if values.get('shift_name', (existing or {}).get('shift_name')) not in ('Day','Night'):
-        raise ValueError('Choose Day or Night shift.')
+    if values.get('shift_name', (existing or {}).get('shift_name')) not in {choice['value'] for choice in shift_choices('production')}:
+        raise ValueError('Choose a configured Slitting shift.')
     unit = clean['width_m'] * clean['slitting_length_m']
     fields = {**custom(existing or {}), **payload.get('custom_fields', {}), 'slitting': clean}
     return {**payload, 'machine_code':machine, 'formula_code':model, 'batch_number':batch,
@@ -126,6 +161,10 @@ def normalise_abnormality(payload, existing=None):
         raise ValueError('Choose a main category and a subcategory belonging to it.')
     notes = str(payload.get('event_notes', old.get('event_notes', ''))).strip()
     if len(notes) > 4000: raise ValueError('Notes must be 4000 characters or fewer.')
+    machine = str(payload.get('machine_code', (existing or {}).get('machine_code', ''))).strip()
+    shift = str(payload.get('shift_name', (existing or {}).get('shift_name', ''))).strip()
+    if machine not in {choice['value'] for choice in machine_choices('abnormality')}: raise ValueError('Choose a configured Slitting machine.')
+    if shift not in {choice['value'] for choice in shift_choices('abnormality')}: raise ValueError('Choose a configured Slitting shift.')
     return {**payload, 'machine_type':'auto', 'event_type':category, 'description':subcategory + (' — ' + notes if notes else ''),
             'custom_fields':{**old, **payload.get('custom_fields', {}), 'subcategory':subcategory, 'event_notes':notes}}
 
@@ -133,6 +172,9 @@ def enrich(row):
     if row.get('qualified_quantity') == '': row['qualified_quantity'] = None
     if row.get('qualified_quantity') == '': row['qualified_quantity'] = None
     fields = custom(row)
+    # Expose configured custom values to every JSON consumer (history, reports,
+    # manager editor, and the read-only display) while retaining custom_fields.
+    row.update({key: value for key, value in fields.items() if key != 'slitting'})
     row.update({k:fields.get(k, '') for k in ('subcategory','event_notes')})
     spec = fields.get('slitting')
     if spec:
@@ -168,5 +210,12 @@ def summary(record_date=None, machine=None):
         all_rows = [enrich(row) for row in _json_safe_rows(cursor.fetchall())]
     rows = [row for row in all_rows if custom(row).get('slitting')]
     machines = sorted({row['machine_code'] for row in rows})
+    with transaction() as cursor:
+        cursor.execute("""SELECT field_key, label, input_type, options_json, is_required, display_order
+                          FROM system_import.field_definitions
+                          WHERE form_key='production' AND is_active=TRUE AND field_key<>'work_order'
+                          ORDER BY display_order""")
+        custom_field_definitions = cursor.fetchall()
     return {'overall':aggregate(rows), 'machines':[{'machine_code':m, 'stats':aggregate([r for r in rows if r['machine_code']==m]), 'records':[r for r in rows if r['machine_code']==m]} for m in machines],
-            'records':rows, 'legacy_records':len(all_rows)-len(rows), 'report_date':record_date}
+            'records':rows, 'legacy_records':len(all_rows)-len(rows), 'report_date':record_date,
+            'custom_field_definitions': custom_field_definitions}
