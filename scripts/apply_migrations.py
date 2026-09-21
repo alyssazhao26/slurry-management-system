@@ -10,8 +10,10 @@ import mysql.connector
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env")
-load_dotenv(ROOT / ".env.departments", override=True)
+load_dotenv(ROOT / ".env", override=True)
+departments_env = ROOT / ".env.departments"
+if departments_env.exists():
+    load_dotenv(departments_env, override=True)
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,11 @@ def safe_identifier(value):
 
 
 def configured_departments():
-    common_user = os.getenv("DB_USER", "slurry_app")
-    common_password = os.getenv("DB_PASSWORD", "")
+    # Migrations require DDL privileges that the website account intentionally
+    # does not have. A dedicated, schema-scoped migrator is the durable default;
+    # the legacy fallback keeps development installations backward compatible.
+    common_user = os.getenv("MIGRATION_DB_USER") or os.getenv("DB_USER", "slurry_app")
+    common_password = os.getenv("MIGRATION_DB_PASSWORD") or os.getenv("DB_PASSWORD", "")
     departments = {"slurry": DepartmentDatabase(
         "slurry", os.getenv("DB_NAME", "slurry_management"), os.getenv("IMPORT_SCHEMA", "system_import"),
         common_user, common_password)}
@@ -47,7 +52,8 @@ def configured_departments():
     if slitting_database and slitting_import:
         departments["slitting"] = DepartmentDatabase(
             "slitting", slitting_database, slitting_import,
-            os.getenv("SLITTING_DB_USER", common_user), os.getenv("SLITTING_DB_PASSWORD", common_password))
+            os.getenv("SLITTING_MIGRATION_DB_USER") or common_user,
+            os.getenv("SLITTING_MIGRATION_DB_PASSWORD") or common_password)
     return departments
 
 
@@ -90,7 +96,7 @@ def applied_versions(connection, create=False):
 
 
 def run_department(department, status_only=False):
-    if not status_only:
+    if not status_only and os.getenv("MIGRATION_CREATE_SCHEMAS", "false").lower() in {"1", "true", "yes"}:
         ensure_schemas(department)
     connection = mysql.connector.connect(**department.connection_config())
     cursor = connection.cursor()

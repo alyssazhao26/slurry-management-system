@@ -12,8 +12,8 @@ def test_employee_pin_must_be_unique(monkeypatch):
         def execute(self, sql, params=None):
             self.sql = sql
 
-        def fetchall(self):
-            return [{"id": 7, "pin_hash": "existing-hash"}]
+        def fetchone(self):
+            return {"id": 7}
 
     @contextmanager
     def fake_transaction():
@@ -21,8 +21,7 @@ def test_employee_pin_must_be_unique(monkeypatch):
 
     monkeypatch.setattr(attendance, "transaction", fake_transaction)
     monkeypatch.setattr(attendance.bcrypt, "hashpw", lambda value, salt: b"new-hash")
-    monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda: b"salt")
-    monkeypatch.setattr(attendance.bcrypt, "checkpw", lambda value, hashed: True)
+    monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda **kwargs: b"salt")
 
     with Flask(__name__).app_context(), pytest.raises(ValueError, match="already assigned"):
         attendance.save_employee({
@@ -68,14 +67,18 @@ def test_employee_reset_state_is_normalised_to_boolean(database_value, expected)
 def test_first_login_pin_reset_updates_visible_pin(monkeypatch):
     executed = []
     class Cursor:
+        fetch_count = 0
         def execute(self, sql, params=None): executed.append((sql, params))
-        def fetchone(self): return {"id": 4, "pin_hash": "temporary-hash", "pin_reset_required": True}
-        def fetchall(self): return [{"id": 8, "pin_hash": "other-hash"}]
+        def fetchone(self):
+            self.fetch_count += 1
+            if self.fetch_count == 1:
+                return {"id": 4, "pin_hash": "temporary-hash", "pin_reset_required": True}
+            return None
     @contextmanager
     def fake_transaction(): yield Cursor()
     monkeypatch.setattr(attendance, "transaction", fake_transaction)
     monkeypatch.setattr(attendance.bcrypt, "hashpw", lambda value, salt: b"personal-hash")
-    monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda: b"salt")
+    monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda **kwargs: b"salt")
     monkeypatch.setattr(attendance.bcrypt, "checkpw", lambda value, hashed: False)
     with Flask(__name__).app_context():
         attendance.reset_employee_pin(4, "4826", "4826")
@@ -91,22 +94,20 @@ def test_first_login_pin_must_differ_from_temporary_pin(monkeypatch):
     def fake_transaction(): yield Cursor()
     monkeypatch.setattr(attendance, "transaction", fake_transaction)
     monkeypatch.setattr(attendance.bcrypt, "hashpw", lambda value, salt: b"personal-hash")
-    monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda: b"salt")
+    monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda **kwargs: b"salt")
     monkeypatch.setattr(attendance.bcrypt, "checkpw", lambda value, hashed: True)
     with Flask(__name__).app_context(), pytest.raises(ValueError, match="different from the temporary"):
         attendance.reset_employee_pin(4, "4826", "4826")
 
 
-def test_attendance_datetime_values_are_html_control_compatible():
+def test_attendance_login_timestamp_is_serialised_for_display():
     rows = attendance._serialise_attendance_rows([{
         "attendance_date": date(2026, 9, 14),
-        "clock_in": datetime(2026, 9, 14, 7, 30),
-        "clock_out": datetime(2026, 9, 14, 16, 0),
+        "login_timestamp": datetime(2026, 9, 14, 7, 30),
     }])
     assert rows[0] == {
         "attendance_date": "2026-09-14",
-        "clock_in": "2026-09-14T07:30",
-        "clock_out": "2026-09-14T16:00",
+        "login_timestamp": "2026-09-14T07:30",
     }
 
 
@@ -118,7 +119,7 @@ def test_attendance_datetime_values_are_html_control_compatible():
     ("overtime_hours", "0.25"),
 ])
 def test_attendance_hours_require_valid_half_hour_values(field, value):
-    payload = {"status": "present", "row_version": 0, field: value}
+    payload = {"row_version": 0, field: value}
     with pytest.raises(ValueError, match="0.5-hour increments"):
         attendance.update_attendance(1, payload)
 
@@ -144,6 +145,8 @@ def test_attendance_login_passes_only_pin(monkeypatch):
     monkeypatch.setattr(Config, "ALLOWED_HOSTS", {"localhost"})
     received = []
     monkeypatch.setattr("app.routes.authenticate_employee", lambda pin: received.append(pin) or {"id": 4, "employee_name": "Worker"})
+    monkeypatch.setattr("app.routes.record_employee_login", lambda employee_id: None)
+    monkeypatch.setattr("app.routes.employee_history", lambda employee_id: [])
     client = create_app().test_client()
     token = client.get("/api/csrf").json["token"]
     response = client.post("/api/attendance/login", json={"pin": "4826"}, headers={"X-CSRF-Token": token})
@@ -200,6 +203,7 @@ def test_employee_session_expires_after_five_minutes(monkeypatch):
     monkeypatch.setattr(Config, "SESSION_COOKIE_SECURE", False)
     monkeypatch.setattr(Config, "ALLOWED_HOSTS", {"localhost"})
     monkeypatch.setattr("app.routes.authenticate_employee", lambda pin: {"id": 4, "employee_name": "Worker"})
+    monkeypatch.setattr("app.routes.record_employee_login", lambda employee_id: None)
     monkeypatch.setattr("app.routes.employee_history", lambda employee_id: [])
     monkeypatch.setattr("app.routes.time", lambda: clock["now"])
     client = create_app().test_client()
@@ -222,6 +226,7 @@ def test_opening_attendance_page_requires_new_login(monkeypatch):
         "app.routes.authenticate_employee",
         lambda pin: {"id": 4, "employee_name": "Worker"},
     )
+    monkeypatch.setattr("app.routes.record_employee_login", lambda employee_id: None)
     monkeypatch.setattr("app.routes.employee_history", lambda employee_id: [])
     client = create_app().test_client()
     token = client.get("/api/csrf").json["token"]
@@ -248,6 +253,47 @@ def test_employee_page_replaces_clock_buttons_with_hour_selectors():
     assert "Set your personal PIN" in template
 
 
+def test_manager_attendance_uses_one_login_timestamp_and_add_record():
+    root = __import__("pathlib").Path(attendance.__file__).parents[1]
+    source = (root / "static" / "app.js").read_text(encoding="utf-8")
+    dashboard = (root / "templates" / "dashboard.html").read_text(encoding="utf-8")
+
+    assert "Login timestamp / 登录时间" in source
+    assert 'name="clock_in"' not in source
+    assert 'name="clock_out"' not in source
+    assert "new-attendance-record" in dashboard
+    assert "attendance-record-form" in dashboard
+    record_dialog = dashboard.split('id="attendance-record-dialog"', 1)[1]
+    record_dialog = record_dialog.split('</dialog>', 1)[0]
+    assert "Status / 状态" not in record_dialog
+    assert "attendance-employee-options" in source
+
+
+def test_employee_login_creates_first_daily_timestamp(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def execute(self, sql, params=None):
+            executed.append((sql, params))
+
+    @contextmanager
+    def fake_transaction():
+        yield Cursor()
+
+    monkeypatch.setattr(attendance, "transaction", fake_transaction)
+    monkeypatch.setattr(attendance, "datetime", type(
+        "FixedDateTime",
+        (),
+        {"now": staticmethod(lambda: datetime(2026, 9, 15, 8, 12))},
+    ))
+    with Flask(__name__).app_context():
+        attendance.record_employee_login(4)
+
+    sql, params = executed[0]
+    assert "login_timestamp=COALESCE" in sql
+    assert params == (4, date(2026, 9, 15), datetime(2026, 9, 15, 8, 12))
+
+
 def test_attendance_hidden_state_cannot_be_overridden_by_form_layout():
     root = __import__("pathlib").Path(attendance.__file__).parents[1]
     stylesheet = (root / "static" / "attendance.css").read_text(encoding="utf-8")
@@ -261,6 +307,7 @@ def test_attendance_export_is_employee_by_date_matrix(monkeypatch):
         {
             "staffing_company": "GNEM",
             "employee_name": "Britney Anderson",
+            "department": "Slurry",
             "attendance_date": "2026-09-14",
             "total_hours": 8,
             "paid_break_hours": 0.5,
@@ -269,6 +316,7 @@ def test_attendance_export_is_employee_by_date_matrix(monkeypatch):
         {
             "staffing_company": "GNEM",
             "employee_name": "Britney Anderson",
+            "department": "Slurry",
             "attendance_date": "2026-09-15",
             "total_hours": 8,
             "paid_break_hours": 1,
@@ -278,7 +326,8 @@ def test_attendance_export_is_employee_by_date_matrix(monkeypatch):
     monkeypatch.setattr(attendance, "list_attendance", lambda **kwargs: (rows, 2))
 
     workbook = load_workbook(attendance.export_attendance())
-    sheet = workbook["Attendance"]
+    assert workbook.sheetnames == ["General", "Slurry"]
+    sheet = workbook["General"]
 
     assert sheet["A1"].value == "Staffing company / 劳务公司"
     assert sheet["B1"].value == "Employee name / 员工姓名"
@@ -289,3 +338,101 @@ def test_attendance_export_is_employee_by_date_matrix(monkeypatch):
     assert sheet["B3"].value == "Britney Anderson"
     assert sheet["C3"].value == 8.5
     assert sheet["D3"].value == 7
+    assert workbook["Slurry"]["B3"].value == "Britney Anderson"
+
+
+def test_attendance_export_keeps_weekend_days_separate_and_uses_zero(monkeypatch):
+    from openpyxl import load_workbook
+
+    rows = [
+        {
+            "staffing_company": "GNEM",
+            "employee_name": "Employee A",
+            "department": "Slurry",
+            "attendance_date": "2026-09-18",
+            "total_hours": 8,
+            "paid_break_hours": 0,
+            "overtime_hours": 0,
+        },
+        {
+            "staffing_company": "GNEM",
+            "employee_name": "Employee A",
+            "department": "Slurry",
+            "attendance_date": "2026-09-21",
+            "total_hours": 8,
+            "paid_break_hours": 0,
+            "overtime_hours": 0,
+        },
+    ]
+    monkeypatch.setattr(attendance, "list_attendance", lambda **kwargs: (rows, 2))
+
+    sheet = load_workbook(attendance.export_attendance())["General"]
+    assert [sheet.cell(2, column).value for column in range(3, 7)] == ["Fri", "Sat", "Sun", "Mon"]
+    assert sheet["D3"].value == 0
+    assert sheet["E3"].value == 0
+
+
+def test_attendance_export_sorts_employee_names_alphabetically(monkeypatch):
+    from openpyxl import load_workbook
+
+    rows = [
+        {
+            "staffing_company": "Agency B",
+            "employee_name": "Zoey Chen",
+            "department": "Slurry",
+            "attendance_date": "2026-09-21",
+            "total_hours": 8,
+            "paid_break_hours": 0,
+            "overtime_hours": 0,
+        },
+        {
+            "staffing_company": "Agency A",
+            "employee_name": "amy Li",
+            "department": "Slurry",
+            "attendance_date": "2026-09-21",
+            "total_hours": 8,
+            "paid_break_hours": 0,
+            "overtime_hours": 0,
+        },
+    ]
+    monkeypatch.setattr(attendance, "list_attendance", lambda **kwargs: (rows, 2))
+
+    workbook = load_workbook(attendance.export_attendance())
+    assert [workbook["General"][cell].value for cell in ("B3", "B4")] == ["amy Li", "Zoey Chen"]
+    assert [workbook["Slurry"][cell].value for cell in ("B3", "B4")] == ["amy Li", "Zoey Chen"]
+
+
+def test_attendance_export_creates_safe_unique_department_sheets(monkeypatch):
+    from openpyxl import load_workbook
+
+    rows = [
+        {
+            "staffing_company": "Agency",
+            "employee_name": "Employee A",
+            "department": "Slurry/Production",
+            "attendance_date": "2026-09-15",
+            "total_hours": 8,
+            "paid_break_hours": 0.5,
+            "overtime_hours": 0,
+        },
+        {
+            "staffing_company": "Agency",
+            "employee_name": "Employee B",
+            "department": "Slurry:Production",
+            "attendance_date": "2026-09-15",
+            "total_hours": 9,
+            "paid_break_hours": 1,
+            "overtime_hours": 0.5,
+        },
+    ]
+    monkeypatch.setattr(attendance, "list_attendance", lambda **kwargs: (rows, 2))
+
+    workbook = load_workbook(attendance.export_attendance())
+
+    assert workbook.sheetnames == [
+        "General",
+        "Slurry-Production",
+        "Slurry-Production (2)",
+    ]
+    assert workbook["Slurry-Production"]["B3"].value == "Employee A"
+    assert workbook["Slurry-Production (2)"]["B3"].value == "Employee B"

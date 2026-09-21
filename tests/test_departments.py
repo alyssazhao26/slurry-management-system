@@ -112,9 +112,56 @@ def test_department_switch_and_tab_isolation(monkeypatch):
     assert client.get('/?department=unknown').status_code==400
     assert client.post('/api/production-records',json={'department':'slurry'},headers={**headers,'X-Department':'slitting'}).status_code==400
 
+
+def test_single_manager_pin_can_switch_departments(monkeypatch):
+    monkeypatch.setattr(Config, 'MANAGER_PIN', 'manager-pin')
+    app=app_for_test(monkeypatch);client=app.test_client()
+    token=client.get('/api/csrf').json['token']
+    response=client.post('/api/manager/login',json={'pin':'manager-pin'},headers={'X-CSRF-Token':token,'X-Department':'slurry'})
+    assert response.status_code==200
+    response=client.post('/api/manager/department',json={'department':'slitting'},headers={'X-CSRF-Token':response.json['csrf_token'],'X-Department':'slurry'})
+    assert response.status_code==200
+    assert response.json['url']=='/?department=slitting'
+
 def test_edit_requires_manager(monkeypatch):
     client=app_for_test(monkeypatch).test_client()
     assert client.get('/api/manager/records/production/1').status_code==403
+
+
+def test_employee_can_edit_event_but_not_use_manager_production_edit(monkeypatch):
+    app = app_for_test(monkeypatch)
+    client = app.test_client()
+    saved = []
+    monkeypatch.setattr(
+        'app.routes.manager_get_record',
+        lambda record_type, record_id: {
+            'id': record_id,
+            'event_type': 'Equipment',
+        },
+    )
+    monkeypatch.setattr(
+        'app.routes.manager_update_record',
+        lambda record_type, record_id, payload, **kwargs: saved.append(
+            (record_type, record_id, payload, kwargs)
+        ) or {'id': record_id},
+    )
+    token = client.get('/api/csrf').json['token']
+
+    assert client.get('/api/abnormality-reports/9').status_code == 200
+    response = client.patch(
+        '/api/abnormality-reports/9',
+        json={'description': 'Corrected'},
+        headers={'X-CSRF-Token': token},
+    )
+
+    assert response.status_code == 200
+    assert saved == [(
+        'abnormality',
+        9,
+        {'description': 'Corrected'},
+        {'audit_action': 'employee_edited'},
+    )]
+    assert client.get('/api/manager/records/production/9').status_code == 403
 
 def test_attendance_employee_department_is_not_request_routing(monkeypatch):
     app=app_for_test(monkeypatch);client=app.test_client();saved=[]

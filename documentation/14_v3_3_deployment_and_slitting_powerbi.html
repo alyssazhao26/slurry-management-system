@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>v3.3 deployment and Slitting Power BI | GNEM</title><link rel="stylesheet" href="assets/docs.css"></head>
+<body><header class="top"><a href="index.html"><strong>GNEM Slurry Production Tracker</strong><span>System documentation</span></a></header>
+<main><article class="doc"><h1>v3.3 deployment and Slitting Power BI</h1>
+
+<h2>Values to collect before starting</h2>
+<ul>
+<li><code>SERVER_IP</code>: fixed LAN address of the GNEM/MySQL server.</li>
+<li><code>POWERBI_IP</code>: fixed LAN address of the approved new Slitting Power BI computer.</li>
+<li>A new long random password for <code>gnem_migrator</code>.</li>
+<li>A different long random password for <code>slitting_powerbi</code>.</li>
+</ul>
+<p>Do not place real passwords in Git, this document, screenshots, or Power BI report files.</p>
+
+<h2>One-time permanent migrator repair</h2>
+<ol>
+<li>On the factory server, open MySQL Workbench using a MySQL administrator account.</li>
+<li>Open <code>deployment/sql/create_production_accounts.sql.template</code>, copy only the four <code>gnem_migrator</code> grant statements and its <code>CREATE USER</code> statement into a temporary Workbench tab, replace <code>MIGRATOR_LONG_RANDOM_PASSWORD</code>, and run them. Do not save the completed SQL file.</li>
+<li>Add these private values to <code>.env.departments</code> on the server:</li>
+</ol>
+<pre><code>MIGRATION_DB_USER=gnem_migrator
+MIGRATION_DB_PASSWORD=THE_NEW_MIGRATOR_PASSWORD
+MIGRATION_CREATE_SCHEMAS=false</code></pre>
+<p>Keep the existing restricted <code>DB_USER</code>, <code>DB_PASSWORD</code>, <code>SLITTING_DB_USER</code>, and <code>SLITTING_DB_PASSWORD</code> unchanged. The website never receives migrator privileges.</p>
+
+<h2>Exact v3.3 deployment sequence</h2>
+<p>Run PowerShell on the factory server. Replace <code>C:\GNEM\slurry-management-system</code> if the installed folder differs.</p>
+<pre><code>Set-Location -LiteralPath 'C:\GNEM\slurry-management-system'
+powershell -ExecutionPolicy Bypass -File .\scripts\backup_factory_database.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\stop_factory_server.ps1
+git fetch --tags origin
+git checkout v3.3.0
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe .\scripts\apply_migrations.py --status --department all
+.\.venv\Scripts\python.exe .\scripts\apply_migrations.py --department all
+.\.venv\Scripts\python.exe .\scripts\apply_migrations.py --status --department all
+powershell -ExecutionPolicy Bypass -File .\scripts\start_factory_server.ps1</code></pre>
+<p>The first status check should list common migration <code>028_daily_task_shift_slots.sql</code> for both departments and Slurry-only migration <code>029_attendance_login_timestamp_and_pin_lookup.sql</code>. The final status must show <code>pending=0</code> for both. If it does not, keep the application stopped and inspect the error; never mark a migration as applied manually.</p>
+
+<h2>Post-deployment verification</h2>
+<ul>
+<li>Open the Slurry and Slitting employee views and confirm each shows only its own department.</li>
+<li>Open both TV URLs and check the fixed four-column layout, empty messages, charts, autoscroll, and ten-second bottom pause.</li>
+<li>Create and edit a future task for each department, then confirm the correct production shift displays it.</li>
+<li>Confirm attendance login and Excel export, including separate Saturday and Sunday columns.</li>
+<li>Review <code>logs/web-server.stderr.log</code> and <code>logs/display-server.stderr.log</code>.</li>
+</ul>
+
+<h2>One-time Slitting Power BI account</h2>
+<ol>
+<li>Give the new Power BI computer a fixed/reserved LAN address (<code>POWERBI_IP</code>).</li>
+<li>On the MySQL server, ensure MySQL listens on the server LAN interface, not only <code>127.0.0.1</code>. Restart MySQL after changing <code>bind-address</code>.</li>
+<li>In an elevated PowerShell window on the server, restrict the firewall rule to the new computer:</li>
+</ol>
+<pre><code>New-NetFirewallRule -DisplayName 'GNEM MySQL - Slitting Power BI' -Direction Inbound -Protocol TCP -LocalPort 3306 -RemoteAddress POWERBI_IP -Action Allow</code></pre>
+<ol start="4">
+<li>In MySQL Workbench as administrator, run the <code>slitting_powerbi</code> statements from <code>deployment/sql/create_production_accounts.sql.template</code> after replacing the IP and password placeholders.</li>
+<li>Verify the account is read-only:</li>
+</ol>
+<pre><code>SHOW GRANTS FOR 'slitting_powerbi'@'POWERBI_IP';</code></pre>
+<p>The result should grant only <code>SELECT</code> on <code>slitting_system_import.*</code>.</p>
+
+<h2>Connect the new Power BI computer</h2>
+<ol>
+<li>Install current Power BI Desktop and Oracle MySQL Connector/NET on the new computer.</li>
+<li>Run <code>Test-NetConnection SERVER_IP -Port 3306</code>. Continue only when <code>TcpTestSucceeded</code> is <code>True</code>.</li>
+<li>In Power BI Desktop, choose <strong>Get data → MySQL database</strong>.</li>
+<li>Server: <code>SERVER_IP:3306</code>. Database: <code>slitting_system_import</code>.</li>
+<li>Choose Database authentication and enter <code>slitting_powerbi</code> plus its private password.</li>
+<li>Select the required read-only tables. Start with <code>production_records</code>, <code>abnormality_reports</code>, <code>daily_tasks</code>, <code>inventory_products</code>, <code>inventory_transactions</code>, <code>slitting_model_specs</code>, and <code>slitting_event_categories</code>.</li>
+<li>Use Import mode unless a reviewed reporting requirement needs otherwise. Confirm refresh, dates, shifts, machines, models, and widths before publishing.</li>
+</ol>
+<p>For Power BI Service scheduled refresh, install the standard-mode on-premises data gateway and Oracle MySQL Connector/NET on the gateway computer. Personal-mode gateway does not support this MySQL connector. Configure the gateway data source with the same server, database, and read-only credentials; never expose port 3306 to the internet.</p>
+
+<h2>Rollback</h2>
+<p>If application verification fails, stop the services and check out the previous tag. Do not reverse schema migrations by deleting columns. Restore the pre-deployment backup only when the database itself must be rolled back, and record that decision.</p>
+</article><p class="footer">Release-specific deployment runbook. Keep machine IPs and passwords in private operational records.</p></main></body></html>

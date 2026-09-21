@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#06233f">
   <title>GNEM Slurry Production Details</title>
-  <link rel="stylesheet" href="/static/display.css?v=20260914-readable-downtime">
+  <link rel="stylesheet" href="/static/display.css?v=20260921-four-block-grid">
 </head>
 <body>
   <main class="display-shell">
@@ -24,11 +24,12 @@
         <div class="section-head"><h2 data-block-title>Ongoing abnormalities / 进行中异常</h2><span>Requires follow-up / 需跟进</span></div>
         <div id="ongoing-events" class="ongoing-list"></div>
       </section>
+      <section class="display-section reminder-section" data-display-block="reminders"><div class="section-head"><h2 data-block-title>Reminders / 提醒事项</h2></div><div id="display-reminders" class="display-reminder-list"></div></section>
       <section class="display-section trend-section production-trend-section" data-display-block="production_trend"><div class="section-head"><h2 data-block-title>7-day production / 7日生产趋势</h2></div><div id="production-trend-chart" class="display-chart"></div></section>
-      <section class="display-section trend-section abnormality-trend-section" data-display-block="abnormality_trend"><div class="section-head"><h2 data-block-title>Abnormal downtime by date / 每日异常停机</h2></div><div id="abnormality-trend-chart" class="display-chart"></div></section>
+      <section class="display-section trend-section abnormality-trend-section" data-display-block="abnormality_trend"><div class="section-head"><h2 data-block-title>Abnormal downtime by date / 每日异常停机</h2></div><p class="chart-note">Abnormality records only; cleaning and normal production excluded. / 仅统计异常记录，不含清洁及正常生产。</p><div id="abnormality-trend-chart" class="display-chart"></div></section>
     </section>
     <footer>Read-only factory display / 只读工厂展示屏 · Detailed records are entered in GNEM / 详细记录请在 GNEM 系统中录入</footer>
   </main>
-  <script src="/static/display.js?v=20260914-readable-downtime"></script>
+  <script src="/static/display.js?v=20260921-empty-status-messages"></script>
 </body>
 </html>

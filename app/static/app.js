@@ -37,7 +37,10 @@ window.fetch = async (url, options = {}) => {
 let viewHistory = ['home'];
 let viewHistoryIndex = 0;
 let pendingManagerAction = null;
-function openManagerWorkspace(){document.querySelector('#manager-workspace-dialog').showModal();if(department==='slurry')initialiseAttendanceManager()}
+function openManagerWorkspace(){
+  document.querySelector('#manager-workspace-dialog').showModal();
+  if(department==='slurry')initialiseAttendanceManager();
+}
 function openManagerLogin(action=null){pendingManagerAction=action;const form=document.querySelector('#manager-login-form');form.reset();document.querySelector('#manager-login-status').textContent='';document.querySelector('#manager-login-dialog').showModal();queueMicrotask(()=>form.elements.pin.focus())}
 document.querySelector('#manager-sign-in').addEventListener('click',()=>openManagerLogin());
 document.querySelector('#close-manager-workspace').addEventListener('click',()=>document.querySelector('#manager-workspace-dialog').close());
@@ -64,7 +67,57 @@ function attendancePagination(root,page,total,onPage){const first=total?(page-1)
 function attendanceRecordQuery(){return new URLSearchParams({page:attendanceRecordPage,...Object.fromEntries(new FormData(document.querySelector('#attendance-filter')))});}
 const halfHourValues=(start,end)=>Array.from({length:Math.round((end-start)*2)+1},(_,index)=>(start+index*.5).toFixed(1));
 function hourOptions(values,current,{blank=false,custom=false}={}){const value=current===null||current===undefined?'':Number(current).toFixed(1),standard=values.includes(value);return `${blank?'<option value="">None / 无</option>':''}${values.map(item=>`<option value="${item}" ${value===item?'selected':''}>${item}</option>`).join('')}${custom?`<option value="custom" ${value&&!standard?'selected':''}>Custom / 自定义</option>`:''}`}
-async function loadManagerAttendanceRecords(){const root=document.querySelector('#manager-attendance-records');root.innerHTML='<p>Loading / 加载中…</p>';const response=await fetch('/api/manager/attendance?'+attendanceRecordQuery()),data=await response.json();if(!response.ok){root.innerHTML=`<p class="error">${escapeHtml(data.error)}</p>`;return}root.innerHTML=attendanceTable(['Staffing company / 劳务公司','Name / 姓名','Date / 日期','Clock in / 上班','Clock out / 下班','Paid break hours / 带薪休息','Total hours / 总工时','Overtime hours / 加班工时','Status / 状态','Manager note / 管理备注','Save / 保存'],data.records.map(row=>{const hasOvertime=row.overtime_hours!==null&&row.overtime_hours!==undefined&&row.overtime_hours!=='',overtime=Number(row.overtime_hours),customOvertime=hasOvertime&&Number.isFinite(overtime)&&!halfHourValues(.5,3).includes(overtime.toFixed(1));return `<tr data-id="${Number(row.id)}" data-version="${Number(row.row_version)}"><td>${escapeHtml(row.staffing_company)}</td><td>${escapeHtml(row.employee_name)}</td><td>${escapeHtml(row.attendance_date)}</td><td><input name="clock_in" type="datetime-local" value="${escapeHtml(row.clock_in||'')}"></td><td><input name="clock_out" type="datetime-local" value="${escapeHtml(row.clock_out||'')}"></td><td><select name="paid_break_hours">${hourOptions(halfHourValues(0,2),row.paid_break_hours)}</select></td><td><select name="total_hours">${hourOptions(halfHourValues(3,12),row.total_hours,{blank:true})}</select></td><td><select name="overtime_hours">${hourOptions(halfHourValues(.5,3),row.overtime_hours,{blank:true,custom:true})}</select><input name="overtime_hours_custom" class="overtime-custom" type="number" min="0.5" max="24" step="0.5" value="${customOvertime?overtime.toFixed(1):''}" placeholder="0.5" ${customOvertime?'':'hidden'}></td><td><select name="status">${['present','absent','leave','excused'].map(status=>`<option value="${status}" ${row.status===status?'selected':''}>${status}</option>`).join('')}</select></td><td><input name="manager_note" maxlength="1000" value="${escapeHtml(row.manager_note||'')}"></td><td><button type="button" class="primary save-attendance-record">Save / 保存</button></td></tr>`}));attendancePagination(document.querySelector('#attendance-record-pages'),data.page,data.total,next=>{attendanceRecordPage=next;loadManagerAttendanceRecords()})}
+async function loadManagerAttendanceRecords() {
+  const root = document.querySelector('#manager-attendance-records');
+  root.innerHTML = '<p>Loading / 加载中…</p>';
+  const response = await fetch('/api/manager/attendance?' + attendanceRecordQuery());
+  const data = await response.json();
+  if (!response.ok) {
+    root.innerHTML = `<p class="error">${escapeHtml(data.error)}</p>`;
+    return;
+  }
+  const headers = [
+    'Staffing company / 劳务公司',
+    'Name / 姓名',
+    'Date / 日期',
+    'Login timestamp / 登录时间',
+    'Paid break hours / 带薪休息',
+    'Total hours / 总工时',
+    'Overtime hours / 加班工时',
+    'Manager note / 管理备注',
+    'Save / 保存',
+  ];
+  const rows = data.records.map((row) => {
+    const hasOvertime = row.overtime_hours !== null
+      && row.overtime_hours !== undefined
+      && row.overtime_hours !== '';
+    const overtime = Number(row.overtime_hours);
+    const customOvertime = hasOvertime
+      && Number.isFinite(overtime)
+      && !halfHourValues(.5, 3).includes(overtime.toFixed(1));
+    return `<tr data-id="${Number(row.id)}" data-version="${Number(row.row_version)}">
+      <td>${escapeHtml(row.staffing_company)}</td>
+      <td>${escapeHtml(row.employee_name)}</td>
+      <td>${escapeHtml(row.attendance_date)}</td>
+      <td>${escapeHtml(row.login_timestamp || 'Manager added / 管理员添加')}</td>
+      <td><select name="paid_break_hours">${hourOptions(halfHourValues(0, 2), row.paid_break_hours, {blank: true})}</select></td>
+      <td><select name="total_hours">${hourOptions(halfHourValues(3, 12), row.total_hours, {blank: true})}</select></td>
+      <td><select name="overtime_hours">${hourOptions(halfHourValues(.5, 3), row.overtime_hours, {blank: true, custom: true})}</select><input name="overtime_hours_custom" class="overtime-custom" type="number" min="0.5" max="24" step="0.5" value="${customOvertime ? overtime.toFixed(1) : ''}" placeholder="0.5" ${customOvertime ? '' : 'hidden'}></td>
+      <td><input name="manager_note" maxlength="1000" value="${escapeHtml(row.manager_note || '')}"></td>
+      <td><button type="button" class="primary save-attendance-record">Save / 保存</button></td>
+    </tr>`;
+  });
+  root.innerHTML = attendanceTable(headers, rows);
+  attendancePagination(
+    document.querySelector('#attendance-record-pages'),
+    data.page,
+    data.total,
+    (next) => {
+      attendanceRecordPage = next;
+      loadManagerAttendanceRecords();
+    },
+  );
+}
 function attendanceEmployeeQuery(){return new URLSearchParams({page:attendanceEmployeePage,...Object.fromEntries(new FormData(document.querySelector('#attendance-employee-search')))});}
 async function loadManagerAttendanceEmployees() {
   const root = document.querySelector('#manager-attendance-employees');
@@ -130,8 +183,77 @@ async function loadManagerAttendanceEmployees() {
   );
 }
 function openAttendanceEmployee(row=null){const form=document.querySelector('#attendance-employee-form');form.reset();form.elements.is_active.checked=true;form.elements.employee_id.value=row?.id??'';form.elements.staffing_company.value=row?.staffing_company??'';form.elements.employee_name.value=row?.employee_name??'';form.elements.employee_department.value=row?.department??'Slurry';form.elements.job_title.value=row?.job_title??'';document.querySelector('#attendance-employee-title').textContent=row?'Edit employee / 编辑员工':'Add employee / 添加员工';document.querySelector('#attendance-employee-status').textContent='';document.querySelector('#attendance-employee-dialog').showModal()}
+
+async function loadAttendanceEmployeeOptions() {
+  const select = document.querySelector('#attendance-record-form [name="employee_id"]');
+  if (!select) return;
+  const response = await fetch('/api/manager/attendance-employee-options');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not load employees.');
+  select.innerHTML = '<option value="">Select employee / 选择员工</option>'
+    + data.employees.map((employee) => `<option value="${Number(employee.id)}">${escapeHtml(employee.staffing_company)} · ${escapeHtml(employee.employee_name)}</option>`).join('');
+}
+
+async function openAttendanceRecord() {
+  const form = document.querySelector('#attendance-record-form');
+  form.reset();
+  form.elements.attendance_date.value = formReferenceDate;
+  document.querySelector('#attendance-record-status').textContent = 'Loading employees… / 正在加载员工…';
+  document.querySelector('#attendance-record-dialog').showModal();
+  try {
+    await loadAttendanceEmployeeOptions();
+    document.querySelector('#attendance-record-status').textContent = '';
+  } catch (error) {
+    document.querySelector('#attendance-record-status').textContent = error.message;
+  }
+}
+
+function initialiseAttendanceRecordCreation() {
+  const form = document.querySelector('#attendance-record-form');
+  if (!form) return;
+  form.elements.paid_break_hours.innerHTML = hourOptions(halfHourValues(0, 2), 0);
+  form.elements.total_hours.innerHTML = hourOptions(halfHourValues(3, 12), 8);
+  form.elements.overtime_hours.innerHTML = hourOptions(
+    halfHourValues(.5, 3),
+    null,
+    {blank: true, custom: true},
+  );
+  document.querySelector('#new-attendance-record').onclick = openAttendanceRecord;
+  document.querySelector('#close-attendance-record').onclick = () => {
+    document.querySelector('#attendance-record-dialog').close();
+  };
+  form.elements.overtime_hours.onchange = (event) => {
+    const custom = form.elements.overtime_hours_custom;
+    custom.hidden = event.target.value !== 'custom';
+    custom.required = event.target.value === 'custom';
+    if (!custom.hidden) custom.focus();
+  };
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(form));
+    if (payload.overtime_hours === 'custom') {
+      payload.overtime_hours = payload.overtime_hours_custom;
+    }
+    delete payload.overtime_hours_custom;
+    const response = await fetch('/api/manager/attendance', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    document.querySelector('#attendance-record-status').textContent = response.ok
+      ? 'Attendance record saved. / 考勤记录已保存。'
+      : data.error;
+    if (response.ok) {
+      attendanceRecordPage = 1;
+      await loadManagerAttendanceRecords();
+      setTimeout(() => document.querySelector('#attendance-record-dialog').close(), 350);
+    }
+  };
+}
+
 async function generateAttendanceQr(){const status=document.querySelector('#attendance-qr-status'),image=document.querySelector('#attendance-qr-image'),urlLabel=document.querySelector('#attendance-qr-url'),base=document.querySelector('#attendance-base-url').value.trim().replace(/\/$/,'');status.textContent='Generating / 正在生成…';image.hidden=true;const response=await fetch('/attendance/qr?'+new URLSearchParams({base_url:base}));if(!response.ok){const data=await response.json();status.textContent=data.error;return}const blob=await response.blob(),url=URL.createObjectURL(blob),attendanceUrl=response.headers.get('X-Attendance-URL')||base+'/attendance';if(image.dataset.objectUrl)URL.revokeObjectURL(image.dataset.objectUrl);image.dataset.objectUrl=url;image.src=url;image.hidden=false;urlLabel.textContent=attendanceUrl;document.querySelector('#open-attendance-link').href=attendanceUrl;status.textContent='Scan with an employee phone, then test the displayed address. / 请用员工手机扫码并测试显示的网址。'}
-function initialiseAttendanceManager(){if(attendanceInitialised)return;attendanceInitialised=true;const base=document.querySelector('#attendance-base-url');base.value=location.origin;document.querySelectorAll('[data-attendance-tab]').forEach(button=>button.onclick=()=>{document.querySelectorAll('[data-attendance-tab]').forEach(item=>item.classList.toggle('active',item===button));document.querySelectorAll('[data-attendance-panel]').forEach(panel=>{const active=panel.dataset.attendancePanel===button.dataset.attendanceTab;panel.classList.toggle('active',active);panel.hidden=!active});if(button.dataset.attendanceTab==='records')loadManagerAttendanceRecords();if(button.dataset.attendanceTab==='employees')loadManagerAttendanceEmployees()});document.querySelector('#generate-attendance-qr').onclick=generateAttendanceQr;document.querySelector('#attendance-filter').onsubmit=event=>{event.preventDefault();attendanceRecordPage=1;loadManagerAttendanceRecords()};document.querySelector('#attendance-export').onclick=()=>location.assign('/api/manager/attendance-export?'+attendanceRecordQuery());document.querySelector('#attendance-employee-search').onsubmit=event=>{event.preventDefault();attendanceEmployeePage=1;loadManagerAttendanceEmployees()};document.querySelector('#new-attendance-employee').onclick=()=>openAttendanceEmployee();document.querySelector('#close-attendance-employee').onclick=()=>document.querySelector('#attendance-employee-dialog').close();const recordsRoot=document.querySelector('#manager-attendance-records');recordsRoot.onchange=event=>{if(event.target.name==='overtime_hours'){const custom=event.target.closest('td').querySelector('.overtime-custom');custom.hidden=event.target.value!=='custom';custom.required=event.target.value==='custom';if(!custom.hidden)custom.focus()}};recordsRoot.onclick=async event=>{if(!event.target.classList.contains('save-attendance-record'))return;const row=event.target.closest('tr'),payload={row_version:Number(row.dataset.version)};row.querySelectorAll('input,select').forEach(control=>payload[control.name]=control.value);if(payload.overtime_hours==='custom')payload.overtime_hours=payload.overtime_hours_custom;delete payload.overtime_hours_custom;const response=await fetch('/api/manager/attendance/'+row.dataset.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();say(response.ok?'Attendance record saved. / 考勤记录已保存。':data.error);if(response.ok)loadManagerAttendanceRecords()};document.querySelector('#manager-attendance-employees').onclick=async event=>{const id=Number(event.target.dataset.id),row=attendanceEmployees.find(item=>Number(item.id)===id);if(event.target.classList.contains('edit-attendance-employee'))openAttendanceEmployee(row);if(event.target.classList.contains('delete-attendance-employee')){if(!confirm(`Delete ${row.employee_name}? Employees with attendance history will be deactivated so records remain intact. / 删除该员工？如已有考勤记录，将停用员工并保留记录。`))return;const response=await fetch('/api/manager/attendance-employees/'+id,{method:'DELETE'}),data=await response.json();say(response.ok?`${data.message} / 员工已删除或停用。`:data.error);if(response.ok)loadManagerAttendanceEmployees()}};document.querySelector('#attendance-employee-form').onsubmit=async event=>{event.preventDefault();const payload=Object.fromEntries(new FormData(event.currentTarget)),id=payload.employee_id;delete payload.employee_id;payload.is_active=event.currentTarget.elements.is_active.checked;const response=await fetch(id?'/api/manager/attendance-employees/'+id:'/api/manager/attendance-employees',{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();document.querySelector('#attendance-employee-status').textContent=response.ok?'Employee saved. / 员工已保存。':data.error;if(response.ok){await loadManagerAttendanceEmployees();setTimeout(()=>document.querySelector('#attendance-employee-dialog').close(),350)}}}
+function initialiseAttendanceManager(){if(attendanceInitialised)return;attendanceInitialised=true;initialiseAttendanceRecordCreation();const base=document.querySelector('#attendance-base-url');base.value=location.origin;document.querySelectorAll('[data-attendance-tab]').forEach(button=>button.onclick=()=>{document.querySelectorAll('[data-attendance-tab]').forEach(item=>item.classList.toggle('active',item===button));document.querySelectorAll('[data-attendance-panel]').forEach(panel=>{const active=panel.dataset.attendancePanel===button.dataset.attendanceTab;panel.classList.toggle('active',active);panel.hidden=!active});if(button.dataset.attendanceTab==='records')loadManagerAttendanceRecords();if(button.dataset.attendanceTab==='employees')loadManagerAttendanceEmployees()});document.querySelector('#generate-attendance-qr').onclick=generateAttendanceQr;document.querySelector('#attendance-filter').onsubmit=event=>{event.preventDefault();attendanceRecordPage=1;loadManagerAttendanceRecords()};document.querySelector('#attendance-export').onclick=()=>location.assign('/api/manager/attendance-export?'+attendanceRecordQuery());document.querySelector('#attendance-employee-search').onsubmit=event=>{event.preventDefault();attendanceEmployeePage=1;loadManagerAttendanceEmployees()};document.querySelector('#new-attendance-employee').onclick=()=>openAttendanceEmployee();document.querySelector('#close-attendance-employee').onclick=()=>document.querySelector('#attendance-employee-dialog').close();const recordsRoot=document.querySelector('#manager-attendance-records');recordsRoot.onchange=event=>{if(event.target.name==='overtime_hours'){const custom=event.target.closest('td').querySelector('.overtime-custom');custom.hidden=event.target.value!=='custom';custom.required=event.target.value==='custom';if(!custom.hidden)custom.focus()}};recordsRoot.onclick=async event=>{if(!event.target.classList.contains('save-attendance-record'))return;const row=event.target.closest('tr'),payload={row_version:Number(row.dataset.version)};row.querySelectorAll('input,select').forEach(control=>payload[control.name]=control.value);if(payload.overtime_hours==='custom')payload.overtime_hours=payload.overtime_hours_custom;delete payload.overtime_hours_custom;const response=await fetch('/api/manager/attendance/'+row.dataset.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();say(response.ok?'Attendance record saved. / 考勤记录已保存。':data.error);if(response.ok)loadManagerAttendanceRecords()};document.querySelector('#manager-attendance-employees').onclick=async event=>{const id=Number(event.target.dataset.id),row=attendanceEmployees.find(item=>Number(item.id)===id);if(event.target.classList.contains('edit-attendance-employee'))openAttendanceEmployee(row);if(event.target.classList.contains('delete-attendance-employee')){if(!confirm(`Delete ${row.employee_name}? Employees with attendance history will be deactivated so records remain intact. / 删除该员工？如已有考勤记录，将停用员工并保留记录。`))return;const response=await fetch('/api/manager/attendance-employees/'+id,{method:'DELETE'}),data=await response.json();say(response.ok?`${data.message} / 员工已删除或停用。`:data.error);if(response.ok)loadManagerAttendanceEmployees()}};document.querySelector('#attendance-employee-form').onsubmit=async event=>{event.preventDefault();const payload=Object.fromEntries(new FormData(event.currentTarget)),id=payload.employee_id;delete payload.employee_id;payload.is_active=event.currentTarget.elements.is_active.checked;const response=await fetch(id?'/api/manager/attendance-employees/'+id:'/api/manager/attendance-employees',{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();document.querySelector('#attendance-employee-status').textContent=response.ok?'Employee saved. / 员工已保存。':data.error;if(response.ok){await loadManagerAttendanceEmployees();await loadAttendanceEmployeeOptions();setTimeout(()=>document.querySelector('#attendance-employee-dialog').close(),350)}}}
 
 function show(viewId, recordHistory = true) {
   const currentView = viewHistory[viewHistoryIndex];
@@ -168,7 +290,10 @@ async function loadHomeTask() {
       const statusLabels = {production_in_progress: 'Production in progress / 生产进行中', re_cut: 'Re-cut / 补切', label_changing: 'Label changing / 更换标签'};
       const production = items.filter(item => item.type === 'slitting_production').map(item => `<li><strong>${escapeHtml(item.product_item)}</strong><span>${escapeHtml(statusLabels[item.production_status] || item.production_status)} · Target / 目标: ${escapeHtml(item.production_target)} ${escapeHtml(item.target_unit==='custom'?item.custom_unit:(item.target_unit||'sr'))}</span></li>`).join('');
       const schedule = items.filter(item => item.type === 'slitting_schedule').map(item => `<li><strong>${escapeHtml(item.machine)} · ${escapeHtml(item.product_item)}</strong><span>Planned input / 计划排产: ${escapeHtml(item.planned_input)} · Operator / 操作员: ${escapeHtml(item.operator)} · Shift lead / 班组长: ${escapeHtml(item.shift_lead)}</span></li>`).join('');
-      document.querySelector('#home-task-details').innerHTML = `${production ? `<section class="task-group"><h3>Production overview / 生产概览</h3><ul class="task-bullets">${production}</ul></section>` : ''}${schedule ? `<section class="task-group"><h3>Schedule / 生产排程</h3><ul class="task-bullets">${schedule}</ul></section>` : ''}` || '<p>No task saved / 暂无任务</p>';
+      const training = items.filter(item => item.type === 'slitting_training').map(item => `<li><strong>${escapeHtml(item.training_item)}</strong><span>Training type / 培训类型: ${escapeHtml(item.training_type)} · Person/group / 受训人员或小组: ${escapeHtml(item.subject)} · Time / 时间: ${escapeHtml(item.time)}</span></li>`).join('');
+      const slot = `<p class="task-slot-label">${escapeHtml(data.daily_task.record_date)} · ${escapeHtml(data.daily_task.shift_label)}</p>`;
+      const groups = `${production ? `<section class="task-group"><h3>Production overview / 生产概览</h3><ul class="task-bullets">${production}</ul></section>` : ''}${schedule ? `<section class="task-group"><h3>Schedule / 生产排程</h3><ul class="task-bullets">${schedule}</ul></section>` : ''}${training ? `<section class="task-group"><h3>Training / 培训</h3><ul class="task-bullets">${training}</ul></section>` : ''}`;
+      document.querySelector('#home-task-details').innerHTML = slot + (groups || '<p>No task saved / 暂无任务</p>');
       document.querySelector('#brand-title').textContent = 'GNEM Slitting Production / GNEM 分切生产';
       return;
     }
@@ -178,14 +303,15 @@ async function loadHomeTask() {
       if (!groupItems.length) return '';
       const rows = groupItems.map((item, index) => {
         const details = item.type === 'production'
-          ? `${isSlitting?'Model / 型号':'Formula / 配方'}: ${escapeHtml(item.formula_code)} · Amount / 数量: ${item.amount_needed ?? '—'} ${isSlitting?'rolls / 卷':'tanks / 罐'} · Machine / 设备: ${escapeHtml(item.machine_assigned)}`
+          ? `${isSlitting?'Model / 型号':'Formula / 配方'}: ${escapeHtml(item.formula_code)} · Tank amount / 罐数: ${item.amount_needed ?? '—'} tanks / 罐${!isSlitting?` · Weight / 重量: ${item.weight_needed ?? 0} kg / 公斤`:''} · Machine / 设备: ${escapeHtml(item.machine_assigned)}`
           : item.type === 'cleaning' ? `Process / 工艺: ${item.process_type === 'semi' ? 'Semi / 半自动' : 'Auto / 全自动'}` : escapeHtml(item.description || '—');
         const heading = item.type === 'production' ? `Production / 生产 · ${escapeHtml(item.machine_assigned || '—')}` : escapeHtml(item.description || labels[type]);
         return `<li><strong>${heading}</strong><span>${details}</span></li>`;
       }).join('');
       return `<section class="task-group"><h3>${labels[type]}</h3><ul class="task-bullets">${rows}</ul></section>`;
     }).join('');
-    document.querySelector('#home-task-details').innerHTML = groups || '<p>No task saved / 暂无任务</p>';
+    const slot = `<p class="task-slot-label">${escapeHtml(data.daily_task.record_date)} · ${escapeHtml(data.daily_task.shift_label)}</p>`;
+    document.querySelector('#home-task-details').innerHTML = slot + (groups || '<p>No task saved / 暂无任务</p>');
     const branding = data.display_settings?.branding || {};
     document.querySelector('#brand-title').textContent = isSlitting ? 'GNEM Slitting Production / GNEM 分切生产' : branding.title || 'GNEM Slurry Production Details / GNEM 制浆生产明细';
     const obsoleteSubtitle = document.querySelector('#brand-subtitle');
@@ -208,7 +334,7 @@ async function loadHomeOngoing() {
     const pending = data.pending_qualifications || [];
     const formatDate = value => { const parts=String(value||'').split('-'); return parts.length===3?`${parts[1]}/${parts[2]}/${parts[0]}`:escapeHtml(value||'—'); };
     pendingRoot.innerHTML = pending.length
-      ? pending.map(record => `<article class="home-pending-item"><strong>${formatDate(record.record_date)} · ${escapeHtml(record.formula_code)}</strong><span>Qualified amount pending / 合格数量待补录</span><small>Machine / 设备: ${escapeHtml(record.machine_code)}${isSlitting?` · Actual input rolls / 实际投入卷数: ${escapeHtml(record.input_rolls)}`:` · Batch / 批次: ${escapeHtml(record.batch_number)} · Actual / 实际: ${escapeHtml(record.actual_quantity)}`}</small><form class="qualified-followup-form home-qualified-followup" data-id="${Number(record.id)}"><label>Qualified quantity / 合格数量<input name="qualified_quantity" type="number" min="0" max="${Number(record.actual_quantity)}" step=".01" required placeholder="Enter amount / 输入数量"></label><button class="primary">Save follow-up / 保存补录</button></form></article>`).join('')
+      ? pending.map(record => `<article class="home-pending-item"><strong>${formatDate(record.record_date)} · ${escapeHtml(record.shift_name || 'Day')} · ${escapeHtml(record.formula_code)}</strong><span>Qualified amount pending / 合格数量待补录</span><small>Shift / 班次: ${escapeHtml(record.shift_name || 'Day')} · Machine / 设备: ${escapeHtml(record.machine_code)}${isSlitting?` · Actual input rolls / 实际投入卷数: ${escapeHtml(record.input_rolls)}`:` · Batch / 批次: ${escapeHtml(record.batch_number)} · Actual / 实际: ${escapeHtml(record.actual_quantity)}`}</small><form class="qualified-followup-form home-qualified-followup" data-id="${Number(record.id)}"><label>Qualified quantity / 合格数量<input name="qualified_quantity" type="number" min="0" max="${Number(record.actual_quantity)}" step=".01" required placeholder="Enter amount / 输入数量"></label><button class="primary">Save follow-up / 保存补录</button></form></article>`).join('')
       : `<p class="home-followup-empty">No pending records until ${formatDate(data.display_date)} / 截至 ${formatDate(data.display_date)} 无待补录记录</p>`;
     root.innerHTML = ongoing.length
       ? ongoing.map(event => `<article class="home-ongoing-item"><strong>${escapeHtml(event.machine_code || 'NA')} · ${escapeHtml(event.event_type)}</strong><span>Severity / Priority / 严重程度 / 优先级: ${escapeHtml(event.severity)}</span><span>Responsible person / 责任人: ${escapeHtml(event.responsible_person || 'Not set / 未设置')}</span><span>Expected finish / 预计完成: ${escapeHtml(event.target_finish_date || 'Not set / 未设置')}</span><span>Event date / 事件日期: ${escapeHtml(event.event_date)}</span><form class="ongoing-card-update home-event-close" data-id="${Number(event.id)}"><label>Actual finish date / 实际完成日期<input name="actual_finish_date" type="date" required></label><label>Solution provided / 解决方案<textarea name="solution_provided" required placeholder="Describe repair steps, changes, and verified result. / 请说明维修步骤、变更及验证结果。"></textarea></label><button class="primary">Close event / 关闭事件</button></form></article>`).join('')
@@ -454,7 +580,7 @@ const recordColumns = {
     ['created_at', 'Saved'],
   ],
   tracker: [
-    ['id', 'ID'], ['event_date', 'Date / 日期'], ['machine_code', 'Machine / 设备'], ['machine_type', 'Process type / 工艺类型'],
+    ['id', 'ID'], ['event_date', 'Date / 日期'], ['shift_name', 'Shift / 班次'], ['machine_code', 'Machine / 设备'], ['machine_type', 'Process type / 工艺类型'],
     ['event_type', 'Event type'], ['severity', 'Severity / Priority'], ['responsible_person', 'Responsible person'],
     ['target_finish_date', 'Expected finish'], ['actual_finish_date', 'Actual finish'],
     ['state', 'Status'],
@@ -489,6 +615,8 @@ function recordFilters(type) {
   return {
     date: root.querySelector('[name="date"]').value,
     machine: root.querySelector('[name="machine"]').value.trim(),
+    formula: root.querySelector('[name="formula"]')?.value.trim() || '',
+    width: root.querySelector('[name="width"]')?.value.trim() || '',
   };
 }
 
@@ -588,13 +716,60 @@ async function loadDailyReport() {
     const productionColumns = selectedReportColumns('production'), eventColumns = selectedReportColumns('events');
     if (!productionColumns.length || !eventColumns.length) { say('Select at least one Production column and one Event column. / 生产数据和事件明细请各选择至少一列。'); return; }
     if (isSlitting) await loadSlittingDailyReport(data.events, dateInput.value, machine);
-    else renderReportTable('#report-production', data.production, productionColumns);
-    if (!isSlitting) renderReportTable('#report-events', data.events, eventColumns);
+    else {
+      renderReportTable('#report-production', data.production, productionColumns);
+      renderReportTable('#report-events', data.events, eventColumns);
+      window.latestSlurryReport = {date: dateInput.value, production: data.production, events: data.events, productionColumns, eventColumns};
+    }
     document.querySelector('#report-sheet').hidden = false;
     document.querySelector('#save-report-image').hidden = false;
   } catch {
     say('Could not generate report. Check server setup and pending migrations. / 无法生成报告，请检查服务器设置和待处理迁移。');
   }
+}
+
+function canvasCellText(context, value, x, y, maxWidth, weight = 400) {
+  context.font = `${weight} 14px "Microsoft YaHei","Segoe UI",sans-serif`;
+  context.fillStyle = '#102f46';
+  context.textBaseline = 'middle';
+  let label = String(value ?? '—');
+  while (label.length > 1 && context.measureText(label).width > maxWidth) label = label.slice(0, -1);
+  if (String(value ?? '—') !== label) label = `${label.slice(0, -1)}…`;
+  context.fillText(label, x, y, maxWidth);
+}
+function drawCanvasTable(context, title, rows, columns, y, width, margin) {
+  context.font = '800 22px "Microsoft YaHei","Segoe UI",sans-serif';
+  context.fillStyle = '#063b5c'; context.fillText(title, margin, y + 24); y += 42;
+  if (!rows.length) { canvasCellText(context, 'No records / 无记录', margin + 14, y + 24, width - margin * 2); return y + 54; }
+  const tableWidth = width - margin * 2, cellWidth = tableWidth / columns.length, rowHeight = 38;
+  context.fillStyle = '#dceaf1'; context.fillRect(margin, y, tableWidth, rowHeight);
+  columns.forEach(([,label], index) => canvasCellText(context, label, margin + index * cellWidth + 7, y + rowHeight / 2, cellWidth - 12, 700));
+  y += rowHeight;
+  rows.forEach((row, rowIndex) => {
+    context.fillStyle = rowIndex % 2 ? '#f2f7fa' : '#ffffff'; context.fillRect(margin, y, tableWidth, rowHeight);
+    columns.forEach(([key], index) => { const raw = key.endsWith('_rate') && row[key] != null ? `${(Number(row[key]) * 100).toFixed(1)}%` : row[key]; canvasCellText(context, raw, margin + index * cellWidth + 7, y + rowHeight / 2, cellWidth - 12); });
+    y += rowHeight;
+  });
+  return y + 18;
+}
+async function saveSlurryReportImage() {
+  const report = window.latestSlurryReport;
+  if (!report) throw new Error('Generate the report first.');
+  await document.fonts.ready;
+  const width = 1800, margin = 42;
+  const estimatedHeight = 130 + (report.production.length + report.events.length + 4) * 56;
+  if (estimatedHeight > 30000) throw new Error('Report is too long for one image.');
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = estimatedHeight;
+  const context = canvas.getContext('2d'); context.fillStyle = '#f7fafc'; context.fillRect(0, 0, width, canvas.height);
+  context.font = '800 32px "Microsoft YaHei","Segoe UI",sans-serif'; context.fillStyle = '#063b5c'; context.fillText('GNEM Slurry Production Details / GNEM 制浆生产明细', margin, 52);
+  context.font = '600 18px "Microsoft YaHei","Segoe UI",sans-serif'; context.fillStyle = '#536b7c'; context.fillText(`Report date / 报告日期: ${report.date}`, margin, 82);
+  let y = 105;
+  y = drawCanvasTable(context, 'Production data / 生产数据', report.production, report.productionColumns, y, width, margin);
+  y = drawCanvasTable(context, 'Daily event details / 每日事件明细', report.events, report.eventColumns, y, width, margin);
+  const output = document.createElement('canvas'); output.width = width; output.height = Math.min(canvas.height, y + 24); output.getContext('2d').drawImage(canvas, 0, 0);
+  const blob = await new Promise(resolve => output.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('Image conversion failed.');
+  const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `GNEM-slurry-${report.date}-daily-report.png`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function saveReportImage() {
@@ -608,6 +783,11 @@ async function saveReportImage() {
   try {
     if (isSlitting && typeof saveSlittingReportImage === 'function') {
       await saveSlittingReportImage();
+      say('Full report image saved. / 完整报告图片已保存。');
+      return;
+    }
+    if (!isSlitting) {
+      await saveSlurryReportImage();
       say('Full report image saved. / 完整报告图片已保存。');
       return;
     }
@@ -846,14 +1026,16 @@ document.querySelectorAll('.copy').forEach(button => button.addEventListener('cl
 
 const taskMachineOptions = isSlitting ? ['FJ2','FJ3','FJ4','FJ5','FJ6','FX1','FX2','FX3','FX4','FX5','FX6','FX7','FX8'] : ['J1','J2','J3','J4','J5','J6','J7','J8','J9','J10-1','J10-2','J10-3','J10-4','J10-5'];
 const slittingProductOptions = ['513MM','514.9MM','515.6MM','547MM','242MM','515.4MM','270.6MM','270MM','88.8MM','67.1MM','73.8MM','96MM','264.5MM','269.8MM','61MM','73.7MM','196MM','557.20MM','62.3MM','61.1MM','61.6MM','93.7MM','73.5MM',['CUSTOM','Custom / 自定义']];
-const slittingStatusOptions = [['production_in_progress','Production in progress / 生产进行中'],['re_cut','Re-cut / 补切'],['label_changing','Label changing / 更换标签']];
+const slittingStatusOptions = [['production_in_progress','Production in progress / 生产进行中'],['re_cut','Re-cut / 补切'],['label_changing','Label changing / 更换标签'],['CUSTOM','Custom / 自定义']];
 const selectedOptionMarkup = (options, selected, placeholder) => `<option value="">${placeholder}</option>${options.map(option => { const value=Array.isArray(option)?option[0]:option,label=Array.isArray(option)?option[1]:option; return `<option value="${escapeHtml(value)}" ${selected===value?'selected':''}>${escapeHtml(label)}</option>`; }).join('')}`;
 function homeTaskItemMarkup(item = {type: 'cleaning'}) {
   if (isSlitting) {
     if (item.type === 'slitting_training') return `<article class="task-item slitting-training-item"><div class="task-item-head"><strong>Training / 培训</strong><button type="button" class="secondary remove-task-item">Remove / 删除</button></div><label>Training item / 培训项目<input class="slitting-training-item-name" maxlength="120" required value="${escapeHtml(item.training_item||'')}"></label><label>Training type / 培训类型<input class="slitting-training-type" maxlength="120" required value="${escapeHtml(item.training_type||'')}"></label><label>Person or group being trained / 受训人员或小组<input class="slitting-training-subject" maxlength="120" required value="${escapeHtml(item.subject||'')}"></label><label>Time / 时间<input class="slitting-training-time" maxlength="120" required value="${escapeHtml(item.time||'')}" placeholder="e.g. 9:00 AM–10:00 AM"></label></article>`;
     const knownProduct=slittingProductOptions.slice(0,-1).includes(String(item.product_item||'').replaceAll(' ','').toUpperCase()),selectedProduct=knownProduct?String(item.product_item||'').replaceAll(' ','').toUpperCase():(item.product_item?'CUSTOM':''),customProduct=selectedProduct==='CUSTOM'?(item.custom_product_item||item.product_item||''):'',targetUnit=item.target_unit||'sr';
     if (item.type === 'slitting_schedule') return `<article class="task-item slitting-schedule-item"><div class="task-item-head"><strong>Schedule row / 排程行</strong><button type="button" class="secondary remove-task-item">Remove / 删除</button></div><label>Machine / 机台<select class="slitting-schedule-machine" required>${selectedOptionMarkup(taskMachineOptions,item.machine,'Select machine / 选择机台')}</select></label><label>Product / 项目<select class="slitting-schedule-product" required>${selectedOptionMarkup(slittingProductOptions,selectedProduct,'Select product / 选择项目')}</select></label><label class="slitting-schedule-custom-product" ${selectedProduct==='CUSTOM'?'':'hidden'}>Custom product / 自定义项目<input maxlength="120" value="${escapeHtml(customProduct)}"></label><label>Planned input / 计划排产<input class="slitting-planned-input" maxlength="120" required value="${escapeHtml(item.planned_input||'')}"></label><label>Operator / 操作员<input class="slitting-operator" maxlength="120" required value="${escapeHtml(item.operator||'')}"></label><label>Shift lead / 班组长<input class="slitting-shift-lead" maxlength="120" required value="${escapeHtml(item.shift_lead||'')}"></label></article>`;
-    return `<article class="task-item slitting-production-item"><div class="task-item-head"><strong>Production item / 生产项目</strong><button type="button" class="secondary remove-task-item">Remove / 删除</button></div><label>Production item / 生产项目<select class="slitting-product-item" required>${selectedOptionMarkup(slittingProductOptions,selectedProduct,'Select product / 选择项目')}</select></label><label class="slitting-custom-product" ${selectedProduct==='CUSTOM'?'':'hidden'}>Custom product or task / 自定义产品或任务<input maxlength="120" value="${escapeHtml(customProduct)}" placeholder="Cleaning or another custom item / 清洁或其他项目"></label><label>Production status / 生产状态<select class="slitting-production-status" required>${selectedOptionMarkup(slittingStatusOptions,item.production_status,'Select status / 选择状态')}</select></label><label>Production target / 生产目标<input class="slitting-production-target" type="number" min="0.01" max="1000000" step="0.01" required value="${item.production_target??''}"><small>Specify the target unit below. / 请在下方注明目标单位。</small></label><label>Target unit / 目标单位<select class="slitting-target-unit" required>${selectedOptionMarkup([['sr','sr'],['MR','MR'],['custom','Custom / 自定义']],targetUnit,'Select unit / 选择单位')}</select></label><label class="slitting-custom-unit" ${targetUnit==='custom'?'':'hidden'}>Custom unit / 自定义单位<input maxlength="30" value="${escapeHtml(item.custom_unit||'')}"></label></article>`;
+    const customStatus=!slittingStatusOptions.slice(0,-1).some(option=>option[0]===item.production_status)&&item.production_status?item.production_status:(item.custom_status||'');
+    const selectedStatus=customStatus?'CUSTOM':item.production_status;
+    return `<article class="task-item slitting-production-item"><div class="task-item-head"><strong>Production item / 生产项目</strong><button type="button" class="secondary remove-task-item">Remove / 删除</button></div><label>Production item / 生产项目<select class="slitting-product-item" required>${selectedOptionMarkup(slittingProductOptions,selectedProduct,'Select product / 选择项目')}</select></label><label class="slitting-custom-product" ${selectedProduct==='CUSTOM'?'':'hidden'}>Custom product or task / 自定义产品或任务<input maxlength="120" value="${escapeHtml(customProduct)}" placeholder="Cleaning or another custom item / 清洁或其他项目"></label><label>Production status / 生产状态<select class="slitting-production-status" required>${selectedOptionMarkup(slittingStatusOptions,selectedStatus,'Select status / 选择状态')}</select></label><label class="slitting-custom-status" ${selectedStatus==='CUSTOM'?'':'hidden'}>Custom status / 自定义状态<input maxlength="120" value="${escapeHtml(customStatus)}"></label><label>Production target / 生产目标<input class="slitting-production-target" type="number" min="0" max="1000000" step="0.01" required value="${item.production_target??''}"><small>Zero is allowed for testing or setup. / 测试或调试可填 0。</small></label><label>Target unit / 目标单位<select class="slitting-target-unit" required>${selectedOptionMarkup([['sr','sr'],['MR','MR'],['custom','Custom / 自定义']],targetUnit,'Select unit / 选择单位')}</select></label><label class="slitting-custom-unit" ${targetUnit==='custom'?'':'hidden'}>Custom unit / 自定义单位<input maxlength="30" value="${escapeHtml(item.custom_unit||'')}"></label></article>`;
   }
   const standardFormula = ['K1-26', 'B1-1', 'E3'].includes(item.formula_code) ? item.formula_code : (item.formula_code ? 'CUSTOM' : '');
   const machines = taskMachineOptions.map(machine => `<option ${item.machine_assigned === machine ? 'selected' : ''}>${machine}</option>`).join('');
@@ -861,7 +1043,7 @@ function homeTaskItemMarkup(item = {type: 'cleaning'}) {
     <label>Task type / 任务类型<select class="task-item-type"><option value="cleaning" ${item.type === 'cleaning' ? 'selected' : ''}>Cleaning / 清洁</option><option value="custom" ${item.type === 'custom' ? 'selected' : ''}>Custom / 自定义</option><option value="production" ${item.type === 'production' ? 'selected' : ''}>Production / 生产</option></select></label>
     <label class="task-item-description">Task name / 任务名称<input class="task-item-description-input" maxlength="255" value="${escapeHtml(item.description || '')}" placeholder="Describe this task / 填写任务名称"></label>
     <label class="task-cleaning-process" hidden>Cleaning process / 清洁类型<select class="task-item-process"><option value="">Select type / 选择类型</option><option value="semi" ${item.process_type === 'semi' ? 'selected' : ''}>Semi / 半自动</option><option value="auto" ${item.process_type === 'auto' ? 'selected' : ''}>Auto / 全自动</option></select></label>
-    <div class="task-production-fields"><label>Formula / 配方<select class="task-item-formula"><option value="">Select formula / 选择配方</option><option ${standardFormula === 'K1-26' ? 'selected' : ''}>K1-26</option><option ${standardFormula === 'B1-1' ? 'selected' : ''}>B1-1</option><option ${standardFormula === 'E3' ? 'selected' : ''}>E3</option><option value="CUSTOM" ${standardFormula === 'CUSTOM' ? 'selected' : ''}>Custom / 自定义</option></select></label><label class="task-item-custom-formula" hidden>Custom formula / 自定义配方<input maxlength="50" value="${standardFormula === 'CUSTOM' ? escapeHtml(item.formula_code) : ''}"></label><label>${isSlitting?'Rolls needed / 所需卷数':'Amount needed / 所需数量（罐）'}<input class="task-item-amount" type="number" min="0" step="0.01" value="${item.amount_needed ?? ''}" placeholder="0.00"></label><label>Machine assigned / 分配设备<select class="task-item-machine"><option value="">Select machine / 选择设备</option>${machines}</select></label></div>
+    <div class="task-production-fields"><label>Formula / 配方<select class="task-item-formula"><option value="">Select formula / 选择配方</option><option ${standardFormula === 'K1-26' ? 'selected' : ''}>K1-26</option><option ${standardFormula === 'B1-1' ? 'selected' : ''}>B1-1</option><option ${standardFormula === 'E3' ? 'selected' : ''}>E3</option><option value="CUSTOM" ${standardFormula === 'CUSTOM' ? 'selected' : ''}>Custom / 自定义</option></select></label><label class="task-item-custom-formula" hidden>Custom formula / 自定义配方<input maxlength="50" value="${standardFormula === 'CUSTOM' ? escapeHtml(item.formula_code) : ''}"></label><label>Tank amount needed / 所需罐数<input class="task-item-amount" type="number" min="0" step="0.01" value="${item.amount_needed ?? ''}" placeholder="0.00"></label><label>Weight needed (kg) / 所需重量（公斤）<input class="task-item-weight" type="number" min="0" step="0.01" value="${item.weight_needed ?? ''}" placeholder="0.00"></label><label>Machine assigned / 分配设备<select class="task-item-machine"><option value="">Select machine / 选择设备</option>${machines}</select></label></div>
   </article>`;
 }
 function syncHomeTaskItem(item) {
@@ -872,35 +1054,72 @@ function syncHomeTaskItem(item) {
   item.querySelector('.task-cleaning-process').hidden = type !== 'cleaning';
   item.querySelector('.task-item-custom-formula').hidden = type !== 'production' || item.querySelector('.task-item-formula').value !== 'CUSTOM';
 }
-function refreshHomeTaskItems() { document.querySelectorAll('.task-item').forEach(item=>{syncHomeTaskItem(item);const unit=item.querySelector('.slitting-target-unit');if(unit){const custom=item.querySelector('.slitting-custom-unit');custom.hidden=unit.value!=='custom';custom.querySelector('input').required=unit.value==='custom';}[['.slitting-product-item','.slitting-custom-product'],['.slitting-schedule-product','.slitting-schedule-custom-product']].forEach(([selectKey,fieldKey])=>{const select=item.querySelector(selectKey),field=item.querySelector(fieldKey);if(select&&field){field.hidden=select.value!=='CUSTOM';field.querySelector('input').required=select.value==='CUSTOM';}});}); }
+function taskItemOrder(item) {
+  if (isSlitting) {
+    if (item.classList.contains('slitting-production-item')) return 10;
+    if (item.classList.contains('slitting-schedule-item')) return 20;
+    if (item.classList.contains('slitting-training-item')) return 30;
+    return 99;
+  }
+  return {production: 10, cleaning: 20, custom: 30}[item.querySelector('.task-item-type')?.value] || 99;
+}
+function groupHomeTaskItems() {
+  const root = document.querySelector('#home-task-items');
+  [...root.querySelectorAll('.task-item')]
+    .sort((left, right) => taskItemOrder(left) - taskItemOrder(right))
+    .forEach(item => root.append(item));
+}
+function refreshHomeTaskItems() { document.querySelectorAll('.task-item').forEach(item=>{syncHomeTaskItem(item);const unit=item.querySelector('.slitting-target-unit');if(unit){const custom=item.querySelector('.slitting-custom-unit');custom.hidden=unit.value!=='custom';custom.querySelector('input').required=unit.value==='custom';}[['.slitting-product-item','.slitting-custom-product'],['.slitting-schedule-product','.slitting-schedule-custom-product'],['.slitting-production-status','.slitting-custom-status']].forEach(([selectKey,fieldKey])=>{const select=item.querySelector(selectKey),field=item.querySelector(fieldKey);if(select&&field){field.hidden=select.value!=='CUSTOM';field.querySelector('input').required=select.value==='CUSTOM';}});});groupHomeTaskItems(); }
+function localDateValue(value) {
+  const offset = value.getTimezoneOffset() * 60000;
+  return new Date(value.getTime() - offset).toISOString().slice(0, 10);
+}
+function currentTaskSlot(now = new Date()) {
+  const target = new Date(now);
+  if (!isSlitting) {
+    return {date: localDateValue(target), shift: target.getDay() === 6 ? 'Day 08-17' : 'Day 08-20'};
+  }
+  let shift = 'Day';
+  if (now.getHours() < 8) { target.setDate(target.getDate() - 1); shift = 'Night'; }
+  else if (now.getHours() >= 20) shift = 'Night';
+  return {date: localDateValue(target), shift};
+}
 async function fillHomeTaskEditor() {
-  const response = await fetch('/api/public-display'); const data = await response.json();
+  const date = document.querySelector('#home-task-date').value;
+  const shift = document.querySelector('#home-task-shift').value;
+  const response = await fetch('/api/daily-task?' + new URLSearchParams({date, shift})); const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Could not load today’s task.');
-  const items = data.daily_task?.task_items || []; const root = document.querySelector('#home-task-items');
-  root.innerHTML = (items.length ? items : (isSlitting ? [{type:'slitting_production'},{type:'slitting_schedule'}] : [{type: 'cleaning'}])).map(homeTaskItemMarkup).join('');
+  const items = data.task?.task_items || []; const root = document.querySelector('#home-task-items');
+  const typeOrder = isSlitting
+    ? {slitting_production: 10, slitting_schedule: 20, slitting_training: 30}
+    : {production: 10, cleaning: 20, custom: 30};
+  const groupedItems = [...(items.length ? items : (isSlitting ? [{type:'slitting_production'},{type:'slitting_schedule'}] : [{type: 'cleaning'}]))]
+    .sort((left, right) => (typeOrder[left.type] || 99) - (typeOrder[right.type] || 99));
+  root.innerHTML = groupedItems.map(homeTaskItemMarkup).join('');
   document.querySelector('#home-task-editor-help').textContent = isSlitting ? 'Set today’s production items and targets, then add the machine schedule below. Actual progress is calculated from qualified Slitting production records. / 设置今日生产项目及目标，并在下方添加机台排程；实际进度按合格分切记录计算。' : 'Add one item per task. Each production item has its own formula, tanks, and assigned machine. / 每项任务单独添加；每个生产任务可设置独立配方、罐数和设备。';
-  document.querySelector('#home-reminders').value = (data.daily_task?.reminders || []).join('\n');
+  document.querySelector('#home-reminders').value = (data.task?.reminders || []).join('\n');
   refreshHomeTaskItems();
 }
 
 document.querySelector('#edit-home-task').addEventListener('click', async () => {
-  try { if(isSlitting&&window.refreshSlittingOptions)await window.refreshSlittingOptions();else if(isSlitting&&window.slittingOptionsReady)await window.slittingOptionsReady;await fillHomeTaskEditor(); document.querySelector('#home-task-dialog').showModal(); }
+  try { const slot=currentTaskSlot();document.querySelector('#home-task-date').value=slot.date;document.querySelector('#home-task-shift').value=slot.shift;if(isSlitting&&window.refreshSlittingOptions)await window.refreshSlittingOptions();else if(isSlitting&&window.slittingOptionsReady)await window.slittingOptionsReady;await fillHomeTaskEditor(); document.querySelector('#home-task-dialog').showModal(); }
   catch (error) { say(error.message); }
 });
 document.querySelector('#close-home-task').addEventListener('click', () => document.querySelector('#home-task-dialog').close());
+document.querySelector('#load-home-task-slot').addEventListener('click', async () => { try { await fillHomeTaskEditor(); } catch(error) { say(error.message); } });
 document.querySelector('#add-home-task-item').addEventListener('click', () => { document.querySelector('#home-task-items').insertAdjacentHTML('beforeend', homeTaskItemMarkup(isSlitting?{type:'slitting_production'}:undefined)); refreshHomeTaskItems(); });
-document.querySelector('#add-home-schedule-item').addEventListener('click', () => { document.querySelector('#home-task-items').insertAdjacentHTML('beforeend', homeTaskItemMarkup({type:'slitting_schedule'})); });
+document.querySelector('#add-home-schedule-item').addEventListener('click', () => { document.querySelector('#home-task-items').insertAdjacentHTML('beforeend', homeTaskItemMarkup({type:'slitting_schedule'})); refreshHomeTaskItems(); });
 document.querySelector('#add-home-training-item')?.addEventListener('click', () => { document.querySelector('#home-task-items').insertAdjacentHTML('beforeend', homeTaskItemMarkup({type:'slitting_training'})); refreshHomeTaskItems(); });
 document.querySelector('#home-task-items').addEventListener('change', refreshHomeTaskItems);
 document.querySelector('#home-task-items').addEventListener('click', event => { if (event.target.classList.contains('remove-task-item')) { event.target.closest('.task-item').remove(); } });
 document.querySelector('#home-daily-task-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const taskItems = [...document.querySelectorAll('.task-item')].map(item => { if(isSlitting){if(item.classList.contains('slitting-training-item'))return {type:'slitting_training',training_item:item.querySelector('.slitting-training-item-name').value,training_type:item.querySelector('.slitting-training-type').value,subject:item.querySelector('.slitting-training-subject').value,time:item.querySelector('.slitting-training-time').value};if(item.classList.contains('slitting-schedule-item'))return {type:'slitting_schedule',machine:item.querySelector('.slitting-schedule-machine').value,product_item:item.querySelector('.slitting-schedule-product').value,custom_product_item:item.querySelector('.slitting-schedule-custom-product input').value,planned_input:item.querySelector('.slitting-planned-input').value,operator:item.querySelector('.slitting-operator').value,shift_lead:item.querySelector('.slitting-shift-lead').value};return {type:'slitting_production',product_item:item.querySelector('.slitting-product-item').value,custom_product_item:item.querySelector('.slitting-custom-product input').value,production_status:item.querySelector('.slitting-production-status').value,production_target:item.querySelector('.slitting-production-target').value,target_unit:item.querySelector('.slitting-target-unit').value,custom_unit:item.querySelector('.slitting-custom-unit input').value};} const formula = item.querySelector('.task-item-formula').value === 'CUSTOM' ? item.querySelector('.task-item-custom-formula input').value : item.querySelector('.task-item-formula').value; return {type: item.querySelector('.task-item-type').value, description: item.querySelector('.task-item-description-input').value, process_type: item.querySelector('.task-item-process').value, formula_code: formula, amount_needed: item.querySelector('.task-item-amount').value, machine_assigned: item.querySelector('.task-item-machine').value}; });
+  const taskItems = [...document.querySelectorAll('.task-item')].map(item => { if(isSlitting){if(item.classList.contains('slitting-training-item'))return {type:'slitting_training',training_item:item.querySelector('.slitting-training-item-name').value,training_type:item.querySelector('.slitting-training-type').value,subject:item.querySelector('.slitting-training-subject').value,time:item.querySelector('.slitting-training-time').value};if(item.classList.contains('slitting-schedule-item'))return {type:'slitting_schedule',machine:item.querySelector('.slitting-schedule-machine').value,product_item:item.querySelector('.slitting-schedule-product').value,custom_product_item:item.querySelector('.slitting-schedule-custom-product input').value,planned_input:item.querySelector('.slitting-planned-input').value,operator:item.querySelector('.slitting-operator').value,shift_lead:item.querySelector('.slitting-shift-lead').value};const status=item.querySelector('.slitting-production-status').value;return {type:'slitting_production',product_item:item.querySelector('.slitting-product-item').value,custom_product_item:item.querySelector('.slitting-custom-product input').value,production_status:status,custom_status:status==='CUSTOM'?item.querySelector('.slitting-custom-status input').value:'',production_target:item.querySelector('.slitting-production-target').value,target_unit:item.querySelector('.slitting-target-unit').value,custom_unit:item.querySelector('.slitting-custom-unit input').value};} const formula = item.querySelector('.task-item-formula').value === 'CUSTOM' ? item.querySelector('.task-item-custom-formula input').value : item.querySelector('.task-item-formula').value; return {type: item.querySelector('.task-item-type').value, description: item.querySelector('.task-item-description-input').value, process_type: item.querySelector('.task-item-process').value, formula_code: formula, amount_needed: item.querySelector('.task-item-amount').value, weight_needed: item.querySelector('.task-item-weight').value, machine_assigned: item.querySelector('.task-item-machine').value}; });
   const reminders = document.querySelector('#home-reminders').value.split('\n').map(value => value.trim()).filter(Boolean);
-  const payload = {task_items: taskItems, reminders};
+  const payload = {record_date:document.querySelector('#home-task-date').value,shift_name:document.querySelector('#home-task-shift').value,task_items: taskItems, reminders};
   const response = await fetch('/api/daily-task', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
   const data = await response.json(), status = document.querySelector('#home-daily-task-status');
-  status.textContent = response.ok ? `${data.message} / 今日任务已保存。` : data.error;
+  status.textContent = response.ok ? `${data.message} / 班次任务已保存。` : data.error;
   if (response.ok) { await loadHomeTask(); setTimeout(() => document.querySelector('#home-task-dialog').close(), 700); }
 });
 
@@ -1101,7 +1320,10 @@ document.addEventListener('click', async event => {
   if (!event.target.classList.contains('manager-edit-row')) return;
   const type = event.target.dataset.recordType, id = event.target.dataset.recordId;
   if (type === 'abnormality') await loadEventTypes(true);
-  const response = await fetch(`/api/manager/records/${type}/${id}`), data = await response.json();
+  const editPath = type === 'abnormality'
+    ? `/api/abnormality-reports/${id}`
+    : `/api/manager/records/${type}/${id}`;
+  const response = await fetch(editPath), data = await response.json();
   if (!response.ok) { say(data.error || 'Could not load record.'); return; }
   openManagerRecordDialog(type, data.record);
 });
@@ -1115,7 +1337,9 @@ document.querySelector('#manager-record-edit').addEventListener('submit', async 
   }
   const editing = Boolean(managerRecordContext.id);
   const path = editing
-    ? `/api/manager/records/${managerRecordContext.type}/${managerRecordContext.id}`
+    ? managerRecordContext.type === 'abnormality'
+      ? `/api/abnormality-reports/${managerRecordContext.id}`
+      : `/api/manager/records/${managerRecordContext.type}/${managerRecordContext.id}`
     : managerRecordContext.type === 'production' ? '/api/production-records' : '/api/abnormality-reports';
   const response = await fetch(path, {method: editing ? 'PATCH' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
   const data = await response.json();
@@ -1153,3 +1377,4 @@ function collectDisplaySettings(root,kind){return [...root.querySelectorAll('.di
 document.querySelector('#add-permanent-text-block').addEventListener('click',()=>{const key=`text_${crypto.randomUUID()}`;const root=document.querySelector('#display-block-settings');root.insertAdjacentHTML('beforeend',displaySettingMarkup({key,type:'static_text',title:'Permanent tasks / 永久任务',content:'',heading_level:'h2',visible:true,order:(root.children.length+1)*10,width:5,height:1,font_size:16},'blocks'));renderDisplayLayoutPreview();document.querySelector('#display-layout-preview .display-preview-block:last-child')?.scrollIntoView({behavior:'smooth',block:'center'})});
 document.querySelector('#display-layout-preview').addEventListener('click',event=>{if(!event.target.classList.contains('remove-display-block'))return;const card=event.target.closest('.display-preview-block');settingRowForCard(card).remove();card.remove();syncBlockOrderFromPreview()});
 document.querySelector('#open-display-settings').addEventListener('click',openDisplaySettings);document.querySelector('#close-display-settings').addEventListener('click',()=>document.querySelector('#display-settings-dialog').close());document.querySelector('#display-settings-form').addEventListener('submit',async event=>{event.preventDefault();const payload={branding:{title:document.querySelector('#display-brand-title').value,subtitle:'',display_eyebrow:document.querySelector('#display-brand-eyebrow').value,display_title:document.querySelector('#display-brand-display-title').value},blocks:collectDisplaySettings(document.querySelector('#display-block-settings'),'blocks'),event_columns:collectDisplaySettings(document.querySelector('#display-column-settings'),'event_columns')};const response=await fetch('/api/manager/display-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json();document.querySelector('#display-settings-status').textContent=response.ok?'Display settings saved. / 看板设置已保存。':(data.error||'Could not save display settings.');if(response.ok)document.querySelector('#brand-title').textContent=data.settings.branding.title});
+document.querySelector('#select-all-event-columns')?.addEventListener('click',()=>{document.querySelectorAll('#display-column-settings [data-setting-visible]').forEach(input=>{input.checked=true});document.querySelector('#display-settings-status').textContent='All Slitting event columns selected. Save the display to apply. / 已全选分切事件列，请保存看板。'});

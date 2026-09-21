@@ -1,6 +1,7 @@
 """Slitting inputs are stored as immutable per-record calculation snapshots."""
 import json
 import math
+import re
 from uuid import uuid4
 from datetime import date
 from ..db import transaction
@@ -195,7 +196,14 @@ def aggregate(rows):
             'qualified_rate':None if pending else ratio(totals['qualified_quantity'],totals['actual_quantity']),
             'yield_rate':None if pending else ratio(totals['qualified_quantity'],totals['input_area'])}
 
-def summary(record_date=None, machine=None):
+def model_width_suffix(model_code):
+    """Return the numeric width following the final slash in a model code."""
+    suffix = str(model_code or '').rsplit('/', 1)[-1].strip()
+    match = re.match(r'^([0-9]+(?:\.[0-9]+)?)', suffix)
+    return float(match.group(1)) if match else None
+
+
+def summary(record_date=None, machine=None, width=None):
     from .records import _json_safe_rows
     clauses, params = [], []
     if record_date:
@@ -209,6 +217,16 @@ def summary(record_date=None, machine=None):
         cursor.execute('SELECT * FROM system_import.production_records' + where + ' ORDER BY record_date DESC, machine_code, shift_name, id', params)
         all_rows = [enrich(row) for row in _json_safe_rows(cursor.fetchall())]
     rows = [row for row in all_rows if custom(row).get('slitting')]
+    if width not in (None, ''):
+        try:
+            selected_width = float(str(width).strip().upper().removesuffix('MM'))
+        except ValueError as exc:
+            raise ValueError('Width must be a number, for example 88.8.') from exc
+        rows = [
+            row for row in rows
+            if model_width_suffix(row.get('formula_code')) is not None
+            and abs(model_width_suffix(row.get('formula_code')) - selected_width) < 0.0001
+        ]
     machines = sorted({row['machine_code'] for row in rows})
     with transaction() as cursor:
         cursor.execute("""SELECT field_key, label, input_type, options_json, is_required, display_order

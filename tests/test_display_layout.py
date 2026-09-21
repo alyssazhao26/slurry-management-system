@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -8,10 +9,46 @@ from app.departments import department_context
 from app.services import records
 
 
+def test_production_slot_uses_night_shift_start_date():
+    with Flask(__name__).app_context(), department_context('slitting'):
+        assert records.current_production_slot(
+            datetime(2026, 9, 7, 7, 59),
+        ) == (date(2026, 9, 6), 'Night')
+        assert records.current_production_slot(
+            datetime(2026, 9, 7, 8, 0),
+        ) == (date(2026, 9, 7), 'Day')
+        assert records.current_production_slot(
+            datetime(2026, 9, 7, 20, 0),
+        ) == (date(2026, 9, 7), 'Night')
+
+
+def test_slurry_uses_two_selectable_day_schedules():
+    with Flask(__name__).app_context(), department_context('slurry'):
+        assert records.current_production_slot(
+            datetime(2026, 9, 12, 21, 0),
+        ) == (date(2026, 9, 12), 'Day 08-20')
+        assert records.production_shift_label(
+            date(2026, 9, 12),
+            'Day 08-17',
+        ) == 'Day · 08:00–17:00'
+        assert records.production_shift_label(
+            date(2026, 9, 14),
+            'Day 08-20',
+        ) == 'Day · 08:00–20:00'
+        assert records.current_production_slot(
+            datetime(2026, 9, 13, 10, 0),
+        ) == (date(2026, 9, 14), 'Day 08-20')
+
+
 def test_slitting_display_uses_all_open_event_feed():
     source = (Path(__file__).parents[1] / "app" / "static" / "slitting-display.js").read_text(encoding="utf-8")
-    assert "fetch('/api/public-display?department=slitting')" in source
+    assert "fetch('/api/public-display?'+slotQuery)" in source
     assert "openData.ongoing_events" in source
+    assert "const taskWidth=trainingVisible?" in source
+    assert "bottomPauseMilliseconds=10000" in source
+    assert "const holdAtBottom=" in source
+    assert "root.scrollHeight-window.innerHeight" in source
+    assert ":5;" in source
 
 
 def test_live_display_keeps_widths_but_allows_content_height():
@@ -27,16 +64,76 @@ def test_live_display_keeps_widths_but_allows_content_height():
         assert "pixelsPerSecond" in source
 
 
-def test_department_specific_five_column_defaults():
+def test_department_specific_display_defaults():
     with Flask(__name__).app_context():
         settings = records.default_display_settings()
-        assert [block["key"] for block in settings["blocks"]] == ["task", "rates", "pending_qualification", "production_trend", "abnormality_trend", "ongoing"]
+        assert [block["key"] for block in settings["blocks"]] == ["task", "reminders", "rates", "pending_qualification", "production_trend", "abnormality_trend", "ongoing"]
         assert settings["event_columns"] == []
         with department_context("slitting"):
             settings = records.default_display_settings()
-            assert [block["key"] for block in settings["blocks"]] == ["slitting_task", "slitting_events"]
+            assert settings["layout_version"] == 4
+            assert [block["key"] for block in settings["blocks"]] == [
+                "slitting_task", "slitting_training", "slitting_reminders",
+                "slitting_pending_qualification", "slitting_events", "slitting_production_trend",
+                "slitting_abnormality_trend",
+            ]
             assert next(block for block in settings["blocks"] if block["key"] == "slitting_task")["width"] == 3
+            assert next(block for block in settings["blocks"] if block["key"] == "slitting_training")["width"] == 2
             assert next(block for block in settings["blocks"] if block["key"] == "slitting_events")["width"] == 5
+            assert settings["event_columns"][0]["key"] == "shift_name"
+
+
+def test_shift_is_visible_in_tracker_and_pending_quality():
+    root = Path(__file__).parents[1]
+    app_js = (root / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    display_js = (root / "app" / "static" / "display.js").read_text(encoding="utf-8")
+    service_source = (root / "app" / "services" / "records.py").read_text(encoding="utf-8")
+
+    assert "['shift_name', 'Shift / \u73ed\u6b21']" in app_js
+    assert "record.shift_name || 'Day'" in app_js
+    assert "record.shift_name || 'Day'" in display_js
+    assert "SELECT id, record_date, shift_name, formula_code" in service_source
+    assert "SELECT id, event_date, start_time, shift_name, machine_code" in service_source
+
+
+def test_tv_mode_uses_responsive_canvas_and_preserves_training_block():
+    root = Path(__file__).parents[1]
+    css = (root / "app" / "static" / "display.css").read_text(encoding="utf-8")
+    slurry_js = (root / "app" / "static" / "display.js").read_text(encoding="utf-8")
+    slitting_js = (root / "app" / "static" / "slitting-display.js").read_text(encoding="utf-8")
+    template = (root / "app" / "templates" / "slitting_display.html").read_text(encoding="utf-8")
+
+    assert "configurable-display:not(.tv-mode)" in css
+    assert "TV_LAYOUT_WIDTH" not in slurry_js
+    assert "TV_LAYOUT_WIDTH" not in slitting_js
+    assert "document.body.style.width = '100%'" in slurry_js
+    assert "document.body.style.width='100%'" in slitting_js
+    assert 'data-display-block="slitting_training"' in template
+    assert "renderSlittingTraining(production.daily_task)" in slitting_js
+
+
+def test_slitting_training_is_rendered_on_management_dashboard():
+    root = Path(__file__).parents[1]
+    app_js = (root / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    dashboard = (root / "app" / "templates" / "dashboard.html").read_text(encoding="utf-8")
+
+    assert "item.type === 'slitting_training'" in app_js
+    assert "Training / 培训" in app_js
+    assert "app.js?v=20260921-fixed-display" in dashboard
+    assert "select-all-event-columns" in dashboard
+
+
+def test_slitting_report_labels_and_optional_training():
+    root = Path(__file__).parents[1]
+    report_js = (root / "app" / "static" / "slitting.js").read_text(encoding="utf-8")
+    display_js = (root / "app" / "static" / "slitting-display.js").read_text(encoding="utf-8")
+
+    assert "Actual output / 实际产出" in report_js
+    assert "Qualified output / 合格产出" in report_js
+    assert "function qualifiedOutput(stats)" in report_js
+    assert "['record_date','Date / 日期']" in report_js
+    assert "trainingSection.hidden=!trainingVisible" in display_js
+    assert "taskSection.dataset.fullRow=String(!trainingVisible)" in display_js
 
 
 def test_slurry_abnormality_chart_uses_stacked_downtime_and_exclusions():
@@ -48,8 +145,58 @@ def test_slurry_abnormality_chart_uses_stacked_downtime_and_exclusions():
     assert "categories" in chart_source and "chart-stack-segment" in chart_source
     assert "categoryIndex" in chart_source
     assert "chart-category-legend" in chart_source
-    assert "direction === 'down' ? limit : 0" in chart_source
-    assert "direction === 'down' ? 'up' : 'down'" in chart_source
+    assert "jumpToTop();" in chart_source
+    assert "bottomPauseMilliseconds = 10000" in chart_source
+    assert "setTimeout(scrollDown, topPauseMilliseconds)" in chart_source
+    assert "direction === 'down' ? 'up' : 'down'" not in chart_source
+
+
+def test_slurry_display_uses_conditional_content_rows():
+    root = Path(__file__).parents[1]
+    source = (root / "app" / "static" / "display.js").read_text(encoding="utf-8")
+    template = (root / "app" / "templates" / "public_display.html").read_text(encoding="utf-8")
+    assert 'data-display-block="reminders"' in template
+    assert "function arrangeSlurryRows" in source
+    assert "companions.length===0?4" in source
+    assert "task.dataset.fullRow=String(companions.length===0)" in source
+    assert "const statusBlocks=[rates,pending]" in source
+    assert "const statusWidths=statusBlocks.length===2?[1,3]:[4]" in source
+    assert "ongoing.style.gridRow='3'" in source
+    assert "const widths=visuals.length===2?[2,2]:[4]" in source
+    assert "No pending records until" in source
+    assert "No unresolved events until" in source
+
+
+def test_slitting_pending_uses_separate_full_width_row():
+    root = Path(__file__).parents[1]
+    source = (root / "app" / "static" / "slitting-display.js").read_text(encoding="utf-8")
+    stylesheet = (root / "app" / "static" / "display.css").read_text(encoding="utf-8")
+    template = (root / "app" / "templates" / "slitting_display.html").read_text(encoding="utf-8")
+    assert "function arrangeSlittingContentRows" in source
+    assert "taskWidth=companions.length===0?4" in source
+    assert "pendingSection.style.gridRow='2'" in source
+    assert "pendingSection.style.gridColumn='1 / -1'" in source
+    assert "eventsSection.style.gridRow='3'" in source
+    assert "const visualWidths=visuals.length===2?[2,2]:[4]" in source
+    assert '[data-display-block="slitting_pending_qualification"] .pending-qualification-list{grid-template-columns:repeat(4,minmax(0,1fr))' in stylesheet
+    assert ".slitting-event-grid{display:grid;grid-template-columns:repeat(4" in stylesheet
+    assert "display.css?v=20260921-four-block-grid" in template
+    assert "No pending records until" in source
+    assert "No unresolved events until" in source
+    assert "slitting-display.js?v=20260921-empty-status-messages" in template
+    assert "TV_LAYOUT_WIDTH" not in source
+
+
+def test_task_editor_defaults_to_current_shift_and_canvas_is_hidden():
+    root = Path(__file__).parents[1]
+    source = (root / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    dashboard = (root / "app" / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    assert "function currentTaskSlot" in source
+    assert "const slot=currentTaskSlot()" in source
+    assert "function nextPlanningSlot" not in source
+    assert "Display canvas / 看板画布" not in dashboard
+    assert 'id="display-layout-preview" hidden' in dashboard
+    assert 'id="quick-add-attendance-record"' not in dashboard
 
 
 def test_slitting_standard_fields_use_slitting_catalog(monkeypatch):
@@ -122,7 +269,7 @@ def test_slitting_custom_product_and_training_are_saved(monkeypatch):
     ], "reminders": []}
     with Flask(__name__).app_context(), department_context("slitting"):
         records.save_daily_task(payload, actor_id=2)
-    saved_items = __import__("json").loads(executed[0][1][1])
+    saved_items = __import__("json").loads(executed[0][1][3])
     assert saved_items[0]["product_item"] == "Cleaning"
     assert saved_items[1]["product_item"] == "Cleaning"
     assert saved_items[2]["type"] == "slitting_training"

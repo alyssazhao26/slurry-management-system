@@ -7,6 +7,7 @@ const esc = (value) => String(value ?? "—")
 
 let csrf = "";
 let signOutTimer = null;
+let employeeRecords = [];
 
 async function refreshCsrf() {
   const response = await fetch("/api/csrf", { cache: "no-store" });
@@ -76,17 +77,18 @@ function showEmployee(data) {
   $("#first-login-pin-form").hidden = !mustReset;
   $("#attendance-entry").hidden = mustReset;
 
-  const rows = (data.records || []).map((row) => `
+  if (Array.isArray(data.records)) employeeRecords = data.records;
+  const rows = employeeRecords.map((row) => `
     <tr>
       <td>${esc(row.attendance_date)}</td>
+      <td>${esc(row.login_timestamp || "Manager added / 管理员添加")}</td>
       <td>${esc(row.paid_break_hours)}</td>
       <td>${esc(row.total_hours)}</td>
       <td>${esc(row.overtime_hours)}</td>
-      <td>${esc(row.status)}</td>
     </tr>
   `);
   $("#employee-history").innerHTML = table(
-    ["Date / 日期", "Paid break / 带薪休息", "Total hours / 总工时", "Overtime / 加班", "Status / 状态"],
+    ["Date / 日期", "Login timestamp / 登录时间", "Paid break / 带薪休息", "Total hours / 总工时", "Overtime / 加班"],
     rows,
   );
   armSignOut(data.expires_at);
@@ -107,7 +109,7 @@ $("#employee-login-form").onsubmit = async (event) => {
     body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))),
   });
   const data = await response.json();
-  if (response.ok) await reloadEmployee();
+  if (response.ok) showEmployee(data);
   say(data.error || "Signed in / 已登录");
 };
 
@@ -134,7 +136,7 @@ $("#attendance-form").onsubmit = async (event) => {
   const data = await response.json();
   say(data.error || data.message);
   if (response.status === 401) return location.reload();
-  if (response.ok) await reloadEmployee();
+  if (response.ok) showEmployee(data);
 };
 
 $("#first-login-pin-form").onsubmit = async (event) => {
@@ -155,7 +157,7 @@ $("#first-login-pin-form").onsubmit = async (event) => {
   if (response.status === 401) return location.reload();
   if (response.ok) {
     event.currentTarget.reset();
-    await reloadEmployee();
+    showEmployee({...data, records: employeeRecords});
   }
 };
 
@@ -165,8 +167,7 @@ $("#employee-logout").onclick = async () => {
 };
 
 (async () => {
-  await refreshCsrf();
-  await reloadEmployee();
+  await Promise.all([refreshCsrf(), reloadEmployee()]);
 })().catch(() => {
   say("Unable to reach the attendance server. / 无法连接考勤服务器。");
 });

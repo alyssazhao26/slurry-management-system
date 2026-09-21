@@ -2,6 +2,32 @@
 
 This project uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
+## 3.3.0 - 2026-09-21
+
+### Added
+
+- Added shift-specific advance task scheduling for Slitting Day/Night shifts and Slurry daytime schedules.
+- Added Slitting width filtering, pending-qualified-roll follow-up, tracker-close coverage, and display demo data tooling.
+- Added manager attendance correction, one-time login timestamps, and department-separated Excel worksheets.
+- Added permanent schema-scoped migration credentials and a read-only Slitting Power BI account template.
+
+### Changed
+
+- Reorganized both TV displays into fixed four-column responsive rows with compact 1 x 1 pending and abnormality cards.
+- Updated production and abnormality visuals, bilingual empty-state messages, and Slitting bottom-scroll pause behavior.
+- Simplified manager access to one PIN and removed the obsolete display-canvas editor.
+
+### Migrations
+
+- `028_daily_task_shift_slots.sql` adds shift-specific task slots without modifying the immutable baseline.
+- `departments/slurry/029_attendance_login_timestamp_and_pin_lookup.sql` adds the attendance timestamp and indexed PIN lookup.
+
+### Validation
+
+- Automated test suite passed: 95 tests.
+- Existing migration files remain unchanged; both schema changes are forward-only migrations.
+- Migration deployment no longer depends on temporarily replacing the restricted website database credentials.
+
 ## 3.0.0 - 2026-09-07
 
 Major multi-department release. One protected application now serves isolated Slurry and Slitting databases, department-specific employee workflows and read-only displays. Slitting adds model lookup management, roll-based production reporting, daily task scheduling, abnormalities, QR inventory, and the consolidated Slitting migration 003. Common migrations 001 and 002 remain unchanged.
