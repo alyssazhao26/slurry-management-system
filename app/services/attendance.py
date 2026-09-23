@@ -1,4 +1,5 @@
 """Attendance storage is deliberately pinned to the Slurry primary database."""
+
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from uuid import uuid4
@@ -8,31 +9,30 @@ import re
 from ..db import transaction
 from ..departments import department_context
 
-
 # PINs are intentionally visible in the manager view. A modest bcrypt cost
 # keeps the compatibility hash inexpensive without slowing the kiosk workflow.
 PIN_BCRYPT_ROUNDS = 8
 
 
 def _run(callback):
-    with department_context('slurry'):
+    with department_context("slurry"):
         with transaction() as cursor:
             return callback(cursor)
 
 
 def _normalise_employee_row(row):
     """Convert MySQL integer flags to JSON-safe Boolean values."""
-    row['pin_reset_required'] = bool(row.get('pin_reset_required'))
-    if 'is_active' in row:
-        row['is_active'] = bool(row.get('is_active'))
+    row["pin_reset_required"] = bool(row.get("pin_reset_required"))
+    if "is_active" in row:
+        row["is_active"] = bool(row.get("is_active"))
     return row
 
 
 def authenticate_employee(pin):
     """Return the active employee matching the indexed, manager-visible PIN."""
-    pin = str(pin or '')
+    pin = str(pin or "")
     if not pin.isdigit() or len(pin) != 4:
-        raise ValueError('PIN must contain exactly 4 digits.')
+        raise ValueError("PIN must contain exactly 4 digits.")
 
     def query(cursor):
         cursor.execute(
@@ -46,8 +46,9 @@ def authenticate_employee(pin):
 
     row = _run(query)
     if not row:
-        raise ValueError('Invalid PIN.')
+        raise ValueError("Invalid PIN.")
     return _normalise_employee_row(row)
+
 
 def employee_history(employee_id):
     def query(cursor):
@@ -80,14 +81,13 @@ def record_employee_login(employee_id):
     _run(save)
     return logged_in_at
 
+
 def submit_attendance(employee_id, payload):
-    paid_break = _half_hour(
-        payload.get('paid_break_hours'), 'Paid break hours', 0, 2
-    )
-    total_hours = _half_hour(payload.get('total_hours'), 'Total hours', 3, 12)
+    paid_break = _half_hour(payload.get("paid_break_hours"), "Paid break hours", 0, 2)
+    total_hours = _half_hour(payload.get("total_hours"), "Total hours", 3, 12)
     overtime = _half_hour(
-        payload.get('overtime_hours'),
-        'Overtime hours',
+        payload.get("overtime_hours"),
+        "Overtime hours",
         0.5,
         24,
         allow_blank=True,
@@ -106,7 +106,7 @@ def submit_attendance(employee_id, payload):
                 "UPDATE system_import.attendance_records "
                 "SET paid_break_hours=%s,total_hours=%s,overtime_hours=%s,"
                 "status='present',row_version=row_version+1 WHERE id=%s",
-                (paid_break, total_hours, overtime, row['id']),
+                (paid_break, total_hours, overtime, row["id"]),
             )
         else:
             cursor.execute(
@@ -119,9 +119,10 @@ def submit_attendance(employee_id, payload):
     _run(save)
     return today.isoformat()
 
+
 def list_employees(page=1, page_size=50, query=None):
-    term = str(query or '').strip()
-    where, params = '', []
+    term = str(query or "").strip()
+    where, params = "", []
     if term:
         where = " WHERE staffing_company LIKE %s OR employee_name LIKE %s"
         params = [f"%{term}%", f"%{term}%"]
@@ -132,7 +133,7 @@ def list_employees(page=1, page_size=50, query=None):
             "SELECT COUNT(*) total FROM system_import.attendance_employees" + where,
             params,
         )
-        total = cursor.fetchone()['total']
+        total = cursor.fetchone()["total"]
         cursor.execute(
             "SELECT id,employee_name,staffing_company,department,"
             "job_title,pin_code,pin_reset_required,is_active,created_at,updated_at "
@@ -141,10 +142,7 @@ def list_employees(page=1, page_size=50, query=None):
             + " ORDER BY staffing_company,employee_name LIMIT %s OFFSET %s",
             [*params, page_size, offset],
         )
-        employees = [
-            _normalise_employee_row(row)
-            for row in cursor.fetchall()
-        ]
+        employees = [_normalise_employee_row(row) for row in cursor.fetchall()]
         return employees, total
 
     return _run(fetch)
@@ -152,6 +150,7 @@ def list_employees(page=1, page_size=50, query=None):
 
 def active_employee_options():
     """Return the current active Slurry employees for manager record entry."""
+
     def fetch(cursor):
         cursor.execute(
             "SELECT id,employee_name,staffing_company "
@@ -162,17 +161,18 @@ def active_employee_options():
 
     return _run(fetch)
 
+
 def save_employee(payload, employee_id=None):
     """Create or edit an employee; a manager-supplied PIN is always temporary."""
-    company = str(payload.get('staffing_company', '')).strip()
-    name = str(payload.get('employee_name', '')).strip()
-    pin = str(payload.get('pin', ''))
+    company = str(payload.get("staffing_company", "")).strip()
+    name = str(payload.get("employee_name", "")).strip()
+    pin = str(payload.get("pin", ""))
     if not company or not name:
-        raise ValueError('Staffing company and name are required.')
+        raise ValueError("Staffing company and name are required.")
     if pin and (not pin.isdigit() or len(pin) != 4):
-        raise ValueError('PIN must contain exactly 4 digits.')
+        raise ValueError("PIN must contain exactly 4 digits.")
     if not employee_id and not pin:
-        raise ValueError('A PIN is required for a new employee.')
+        raise ValueError("A PIN is required for a new employee.")
 
     pin_hash = (
         bcrypt.hashpw(
@@ -182,11 +182,11 @@ def save_employee(payload, employee_id=None):
         if pin
         else None
     )
-    active = bool(payload.get('is_active', True))
-    department = str(
-        payload.get('employee_department', payload.get('department', ''))
-    ).strip() or None
-    title = str(payload.get('job_title', '')).strip() or None
+    active = bool(payload.get("is_active", True))
+    department = (
+        str(payload.get("employee_department", payload.get("department", ""))).strip() or None
+    )
+    title = str(payload.get("job_title", "")).strip() or None
 
     def save(cursor):
         if pin:
@@ -197,7 +197,7 @@ def save_employee(payload, employee_id=None):
             )
             if cursor.fetchone():
                 raise ValueError(
-                    'PIN is already assigned to another employee. Choose a unique PIN.'
+                    "PIN is already assigned to another employee. Choose a unique PIN."
                 )
         if employee_id:
             # Leaving PIN blank preserves it. Supplying one forces first-login setup.
@@ -220,9 +220,9 @@ def save_employee(payload, employee_id=None):
                 ),
             )
             if cursor.rowcount != 1:
-                raise ValueError('Employee not found.')
+                raise ValueError("Employee not found.")
         else:
-            code = 'ATT-' + uuid4().hex.upper()
+            code = "ATT-" + uuid4().hex.upper()
             cursor.execute(
                 "INSERT INTO system_import.attendance_employees("
                 "employee_code,employee_name,staffing_company,department,"
@@ -234,20 +234,21 @@ def save_employee(payload, employee_id=None):
     try:
         _run(save)
     except Exception as exc:
-        if 'Duplicate' in str(exc):
+        if "Duplicate" in str(exc):
             raise ValueError(
-                'Could not create a unique internal employee record. Try again.'
+                "Could not create a unique internal employee record. Try again."
             ) from exc
         raise
 
+
 def reset_employee_pin(employee_id, new_pin, confirm_pin):
     """Replace a temporary manager PIN exactly once with an employee PIN."""
-    new_pin = str(new_pin or '')
-    confirm_pin = str(confirm_pin or '')
+    new_pin = str(new_pin or "")
+    confirm_pin = str(confirm_pin or "")
     if not new_pin.isdigit() or len(new_pin) != 4:
-        raise ValueError('New PIN must contain exactly 4 digits.')
+        raise ValueError("New PIN must contain exactly 4 digits.")
     if new_pin != confirm_pin:
-        raise ValueError('The new PIN and confirmation do not match.')
+        raise ValueError("The new PIN and confirmation do not match.")
     new_hash = bcrypt.hashpw(
         new_pin.encode(),
         bcrypt.gensalt(rounds=PIN_BCRYPT_ROUNDS),
@@ -262,22 +263,18 @@ def reset_employee_pin(employee_id, new_pin, confirm_pin):
         )
         employee = cursor.fetchone()
         if not employee:
-            raise ValueError('Employee not found or inactive.')
-        if not employee['pin_reset_required']:
-            raise ValueError('First-login PIN setup has already been completed.')
-        if bcrypt.checkpw(new_pin.encode(), employee['pin_hash'].encode()):
-            raise ValueError(
-                'Choose a new PIN that is different from the temporary PIN.'
-            )
+            raise ValueError("Employee not found or inactive.")
+        if not employee["pin_reset_required"]:
+            raise ValueError("First-login PIN setup has already been completed.")
+        if bcrypt.checkpw(new_pin.encode(), employee["pin_hash"].encode()):
+            raise ValueError("Choose a new PIN that is different from the temporary PIN.")
         cursor.execute(
             "SELECT id FROM system_import.attendance_employees "
             "WHERE pin_code=%s AND id<>%s LIMIT 1 FOR UPDATE",
             (new_pin, employee_id),
         )
         if cursor.fetchone():
-            raise ValueError(
-                'PIN is already assigned to another employee. Choose a unique PIN.'
-            )
+            raise ValueError("PIN is already assigned to another employee. Choose a unique PIN.")
         cursor.execute(
             "UPDATE system_import.attendance_employees "
             "SET pin_hash=%s,pin_code=%s,pin_reset_required=FALSE WHERE id=%s",
@@ -286,31 +283,30 @@ def reset_employee_pin(employee_id, new_pin, confirm_pin):
 
     _run(save)
 
+
 def delete_employee(employee_id):
     """Remove unused employees; archive employees that already own attendance history."""
 
     def remove(cursor):
         cursor.execute(
-            "SELECT COUNT(*) total FROM system_import.attendance_records "
-            "WHERE employee_id=%s",
+            "SELECT COUNT(*) total FROM system_import.attendance_records " "WHERE employee_id=%s",
             (employee_id,),
         )
-        has_history = cursor.fetchone()['total'] > 0
+        has_history = cursor.fetchone()["total"] > 0
         if has_history:
             cursor.execute(
-                "UPDATE system_import.attendance_employees "
-                "SET is_active=FALSE WHERE id=%s",
+                "UPDATE system_import.attendance_employees " "SET is_active=FALSE WHERE id=%s",
                 (employee_id,),
             )
-            action = 'archived'
+            action = "archived"
         else:
             cursor.execute(
                 "DELETE FROM system_import.attendance_employees WHERE id=%s",
                 (employee_id,),
             )
-            action = 'deleted'
+            action = "deleted"
         if cursor.rowcount != 1:
-            raise ValueError('Employee not found.')
+            raise ValueError("Employee not found.")
         return action
 
     return _run(remove)
@@ -325,49 +321,49 @@ def _filters(
     clauses = []
     params = []
     if staffing_company:
-        clauses.append('e.staffing_company LIKE %s')
-        params.append(f'%{staffing_company}%')
+        clauses.append("e.staffing_company LIKE %s")
+        params.append(f"%{staffing_company}%")
     if employee_name:
-        clauses.append('e.employee_name LIKE %s')
-        params.append(f'%{employee_name}%')
+        clauses.append("e.employee_name LIKE %s")
+        params.append(f"%{employee_name}%")
     date_filters = [
-        ('r.attendance_date >= %s', start_date),
-        ('r.attendance_date <= %s', end_date),
+        ("r.attendance_date >= %s", start_date),
+        ("r.attendance_date <= %s", end_date),
     ]
     for column, value in date_filters:
         if value:
             try:
                 date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError('Choose valid attendance dates.') from exc
+                raise ValueError("Choose valid attendance dates.") from exc
             clauses.append(column)
             params.append(value)
-    return (' WHERE ' + ' AND '.join(clauses) if clauses else ''), params
+    return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
 
 
 def _serialise_attendance_rows(rows):
     for row in rows:
-        if isinstance(row.get('attendance_date'), date):
-            row['attendance_date'] = row['attendance_date'].isoformat()
-        for key in ('login_timestamp', 'clock_in', 'clock_out'):
+        if isinstance(row.get("attendance_date"), date):
+            row["attendance_date"] = row["attendance_date"].isoformat()
+        for key in ("login_timestamp", "clock_in", "clock_out"):
             if isinstance(row.get(key), datetime):
-                row[key] = row[key].isoformat(timespec='minutes')
+                row[key] = row[key].isoformat(timespec="minutes")
     return rows
 
+
 def _half_hour(raw, label, minimum, maximum, allow_blank=False):
-    if raw in (None, ''):
+    if raw in (None, ""):
         if allow_blank:
             return None
-        raise ValueError(f'Choose {label.lower()}.')
+        raise ValueError(f"Choose {label.lower()}.")
     try:
         value = float(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f'{label} must be a number.') from exc
+        raise ValueError(f"{label} must be a number.") from exc
     invalid_increment = abs(value * 2 - round(value * 2)) > 1e-9
     if value < minimum or value > maximum or invalid_increment:
         raise ValueError(
-            f'{label} must be between {minimum:.1f} and {maximum:.1f} '
-            'in 0.5-hour increments.'
+            f"{label} must be between {minimum:.1f} and {maximum:.1f} " "in 0.5-hour increments."
         )
     return value
 
@@ -379,11 +375,10 @@ def list_attendance(page=1, page_size=50, **filters):
     def query(cursor):
         cursor.execute(
             "SELECT COUNT(*) total FROM system_import.attendance_records r "
-            "JOIN system_import.attendance_employees e ON e.id=r.employee_id"
-            + where,
+            "JOIN system_import.attendance_employees e ON e.id=r.employee_id" + where,
             params,
         )
-        total = cursor.fetchone()['total']
+        total = cursor.fetchone()["total"]
         cursor.execute(
             "SELECT r.id,r.employee_id,e.employee_name,e.staffing_company,"
             "e.department,e.job_title,r.attendance_date,r.login_timestamp,"
@@ -404,43 +399,51 @@ def list_attendance(page=1, page_size=50, **filters):
 def create_attendance(payload):
     """Create one manager-entered attendance row for an active employee and date."""
     try:
-        employee_id = int(payload.get('employee_id'))
+        employee_id = int(payload.get("employee_id"))
     except (TypeError, ValueError) as exc:
-        raise ValueError('Choose an employee.') from exc
+        raise ValueError("Choose an employee.") from exc
     try:
-        attendance_date = date.fromisoformat(str(payload.get('attendance_date', '')))
+        attendance_date = date.fromisoformat(str(payload.get("attendance_date", "")))
     except ValueError as exc:
-        raise ValueError('Choose a valid attendance date.') from exc
+        raise ValueError("Choose a valid attendance date.") from exc
 
     paid_break = _half_hour(
-        payload.get('paid_break_hours'), 'Paid break hours', 0, 2,
+        payload.get("paid_break_hours"),
+        "Paid break hours",
+        0,
+        2,
         allow_blank=True,
     )
     total_hours = _half_hour(
-        payload.get('total_hours'), 'Total hours', 3, 12,
+        payload.get("total_hours"),
+        "Total hours",
+        3,
+        12,
         allow_blank=True,
     )
     overtime = _half_hour(
-        payload.get('overtime_hours'), 'Overtime hours', 0.5, 24,
+        payload.get("overtime_hours"),
+        "Overtime hours",
+        0.5,
+        24,
         allow_blank=True,
     )
-    note = str(payload.get('manager_note', '')).strip() or None
+    note = str(payload.get("manager_note", "")).strip() or None
 
     def save(cursor):
         cursor.execute(
-            "SELECT id FROM system_import.attendance_employees "
-            "WHERE id=%s AND is_active=TRUE",
+            "SELECT id FROM system_import.attendance_employees " "WHERE id=%s AND is_active=TRUE",
             (employee_id,),
         )
         if not cursor.fetchone():
-            raise ValueError('Choose a current active employee.')
+            raise ValueError("Choose a current active employee.")
         cursor.execute(
             "SELECT id FROM system_import.attendance_records "
             "WHERE employee_id=%s AND attendance_date=%s",
             (employee_id, attendance_date),
         )
         if cursor.fetchone():
-            raise ValueError('That employee already has a record for this date.')
+            raise ValueError("That employee already has a record for this date.")
         cursor.execute(
             "INSERT INTO system_import.attendance_records("
             "employee_id,attendance_date,paid_break_hours,total_hours,"
@@ -458,25 +461,26 @@ def create_attendance(payload):
 
     _run(save)
 
+
 def update_attendance(record_id, payload):
-    note = str(payload.get('manager_note', '')).strip()
+    note = str(payload.get("manager_note", "")).strip()
     paid_break = _half_hour(
-        payload.get('paid_break_hours'),
-        'Paid break hours',
+        payload.get("paid_break_hours"),
+        "Paid break hours",
         0,
         2,
         allow_blank=True,
     )
     total_hours = _half_hour(
-        payload.get('total_hours'),
-        'Total hours',
+        payload.get("total_hours"),
+        "Total hours",
         3,
         12,
         allow_blank=True,
     )
     overtime = _half_hour(
-        payload.get('overtime_hours'),
-        'Overtime hours',
+        payload.get("overtime_hours"),
+        "Overtime hours",
         0.5,
         24,
         allow_blank=True,
@@ -494,85 +498,84 @@ def update_attendance(record_id, payload):
                 overtime,
                 note or None,
                 record_id,
-                int(payload.get('row_version', 0)),
+                int(payload.get("row_version", 0)),
             ),
         )
         if cursor.rowcount != 1:
-            raise ValueError(
-                'Record changed or was not found. Refresh and try again.'
-            )
+            raise ValueError("Record changed or was not found. Refresh and try again.")
 
     _run(save)
 
+
 def export_attendance(**filters):
+    start_date = str(filters.get("start_date") or "").strip()
+    end_date = str(filters.get("end_date") or "").strip()
+    if not start_date or not end_date:
+        raise ValueError("Choose both the export start date and end date.")
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except ValueError as exc:
+        raise ValueError("Choose valid attendance export dates.") from exc
+    if start > end:
+        raise ValueError("The export start date cannot be after the end date.")
+
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Font, PatternFill
     except ImportError as exc:
         raise ValueError(
-            'Excel export is unavailable. Run pip install -r requirements.txt '
-            'in the Python 3.13 environment.'
+            "Excel export is unavailable. Run pip install -r requirements.txt "
+            "in the Python 3.13 environment."
         ) from exc
 
     rows, _ = list_attendance(page=1, page_size=100000, **filters)
     record_dates = sorted(
-        {
-            date.fromisoformat(row['attendance_date'])
-            for row in rows
-            if row.get('attendance_date')
-        }
+        {date.fromisoformat(row["attendance_date"]) for row in rows if row.get("attendance_date")}
     )
-    start_date = filters.get('start_date')
-    end_date = filters.get('end_date')
-    if record_dates or start_date or end_date:
-        start = date.fromisoformat(start_date) if start_date else min(record_dates)
-        end = date.fromisoformat(end_date) if end_date else max(record_dates)
-        record_dates = [
-            start + timedelta(days=offset)
-            for offset in range((end - start).days + 1)
-        ]
+    record_dates = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
 
     # Pivot records into one employee row and one calendar-date column. Keep
     # department in the key so the general worksheet cannot merge two people
     # with the same company and name from different departments.
     employees = {}
     for row in rows:
-        department = str(row.get('department') or 'Unassigned').strip()
+        department = str(row.get("department") or "Unassigned").strip()
         employee_key = (
             department,
-            row['staffing_company'],
-            row['employee_name'],
+            row["staffing_company"],
+            row["employee_name"],
         )
         employee = employees.setdefault(
             employee_key,
             {
-                'department': department,
-                'staffing_company': row['staffing_company'],
-                'employee_name': row['employee_name'],
-                'hours': {},
+                "department": department,
+                "staffing_company": row["staffing_company"],
+                "employee_name": row["employee_name"],
+                "hours": {},
             },
         )
         worked_hours = (
-            float(row.get('total_hours') or 0)
-            - float(row.get('paid_break_hours') or 0)
-            + float(row.get('overtime_hours') or 0)
+            float(row.get("total_hours") or 0)
+            - float(row.get("paid_break_hours") or 0)
+            + float(row.get("overtime_hours") or 0)
         )
-        employee['hours'][date.fromisoformat(row['attendance_date'])] = round(
+        employee["hours"][date.fromisoformat(row["attendance_date"])] = round(
             worked_hours,
             2,
         )
 
-    header_fill = PatternFill('solid', fgColor='0070C0')
-    weekend_fill = PatternFill('solid', fgColor='5B9BD5')
-    header_font = Font(color='FFFFFF', bold=True)
+    header_fill = PatternFill("solid", fgColor="0070C0")
+    weekend_fill = PatternFill("solid", fgColor="5B9BD5")
+    header_font = Font(color="FFFFFF", bold=True)
 
     def populate_sheet(sheet, employee_rows):
         """Write the same date matrix to the general or department sheet."""
-        sheet.freeze_panes = 'C3'
-        sheet.merge_cells('A1:A2')
-        sheet.merge_cells('B1:B2')
-        sheet['A1'] = 'Staffing company / 劳务公司'
-        sheet['B1'] = 'Employee name / 员工姓名'
+        sheet.freeze_panes = "C3"
+        sheet.merge_cells("A1:A2")
+        sheet.merge_cells("B1:B2")
+        sheet["A1"] = "Staffing company / 劳务公司"
+        sheet["B1"] = "Employee name / 员工姓名"
 
         for column, attendance_date in enumerate(record_dates, start=3):
             date_cell = sheet.cell(
@@ -580,66 +583,68 @@ def export_attendance(**filters):
                 column=column,
                 value=attendance_date,
             )
-            date_cell.number_format = 'd'
-            weekday = attendance_date.strftime('%a')
+            date_cell.number_format = "d"
+            weekday = attendance_date.strftime("%a")
             sheet.cell(row=2, column=column, value=weekday)
 
         for employee in employee_rows:
-            sheet.append([
-                employee['staffing_company'],
-                employee['employee_name'],
-                *[employee['hours'].get(day, 0) for day in record_dates],
-            ])
+            sheet.append(
+                [
+                    employee["staffing_company"],
+                    employee["employee_name"],
+                    *[employee["hours"].get(day, 0) for day in record_dates],
+                ]
+            )
 
         for row_number in (1, 2):
             for cell in sheet[row_number]:
                 cell.fill = header_fill
                 cell.font = header_font
                 cell.alignment = Alignment(
-                    horizontal='center',
-                    vertical='center',
+                    horizontal="center",
+                    vertical="center",
                 )
         for column, attendance_date in enumerate(record_dates, start=3):
             if attendance_date.weekday() >= 5:
                 sheet.cell(row=1, column=column).fill = weekend_fill
                 sheet.cell(row=2, column=column).fill = weekend_fill
 
-        sheet.column_dimensions['A'].width = 24
-        sheet.column_dimensions['B'].width = 24
+        sheet.column_dimensions["A"].width = 24
+        sheet.column_dimensions["B"].width = 24
         for column in range(3, len(record_dates) + 3):
             column_letter = sheet.cell(row=1, column=column).column_letter
             sheet.column_dimensions[column_letter].width = 15
 
     def unique_sheet_name(department, existing_names):
         """Return a valid, case-insensitively unique Excel worksheet name."""
-        base = re.sub(r'[\\/*?:\[\]]', '-', department).strip(" '")
-        base = base or 'Unassigned'
+        base = re.sub(r"[\\/*?:\[\]]", "-", department).strip(" '")
+        base = base or "Unassigned"
         base = base[:31]
         candidate = base
         suffix = 2
         while candidate.casefold() in existing_names:
-            marker = f' ({suffix})'
-            candidate = f'{base[:31 - len(marker)]}{marker}'
+            marker = f" ({suffix})"
+            candidate = f"{base[:31 - len(marker)]}{marker}"
             suffix += 1
         existing_names.add(candidate.casefold())
         return candidate
 
     book = Workbook()
     general_sheet = book.active
-    general_sheet.title = 'General'
+    general_sheet.title = "General"
     employee_rows = sorted(
         employees.values(),
         key=lambda employee: (
-            employee['employee_name'].casefold(),
-            employee['staffing_company'].casefold(),
-            employee['department'].casefold(),
+            employee["employee_name"].casefold(),
+            employee["staffing_company"].casefold(),
+            employee["department"].casefold(),
         ),
     )
     populate_sheet(general_sheet, employee_rows)
 
-    existing_names = {'general'}
+    existing_names = {"general"}
     departments = sorted(
-        {employee['department'] for employee in employee_rows},
+        {employee["department"] for employee in employee_rows},
         key=str.casefold,
     )
     for department in departments:
@@ -647,11 +652,7 @@ def export_attendance(**filters):
         department_sheet = book.create_sheet(sheet_name)
         populate_sheet(
             department_sheet,
-            [
-                employee
-                for employee in employee_rows
-                if employee['department'] == department
-            ],
+            [employee for employee in employee_rows if employee["department"] == department],
         )
 
     output = BytesIO()

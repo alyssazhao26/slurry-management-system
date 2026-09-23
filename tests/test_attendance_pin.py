@@ -24,17 +24,21 @@ def test_employee_pin_must_be_unique(monkeypatch):
     monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda **kwargs: b"salt")
 
     with Flask(__name__).app_context(), pytest.raises(ValueError, match="already assigned"):
-        attendance.save_employee({
-            "staffing_company": "Agency",
-            "employee_name": "Worker",
-            "pin": "1234",
-        })
+        attendance.save_employee(
+            {
+                "staffing_company": "Agency",
+                "employee_name": "Worker",
+                "pin": "1234",
+            }
+        )
 
 
 @pytest.mark.parametrize("pin", ["123", "12345", "12a4"])
 def test_employee_pin_must_be_exactly_four_digits(pin):
     with pytest.raises(ValueError, match="exactly 4 digits"):
-        attendance.save_employee({"staffing_company": "Agency", "employee_name": "Worker", "pin": pin})
+        attendance.save_employee(
+            {"staffing_company": "Agency", "employee_name": "Worker", "pin": pin}
+        )
 
 
 def test_manager_employee_list_includes_visible_pin_column():
@@ -66,16 +70,23 @@ def test_employee_reset_state_is_normalised_to_boolean(database_value, expected)
 
 def test_first_login_pin_reset_updates_visible_pin(monkeypatch):
     executed = []
+
     class Cursor:
         fetch_count = 0
-        def execute(self, sql, params=None): executed.append((sql, params))
+
+        def execute(self, sql, params=None):
+            executed.append((sql, params))
+
         def fetchone(self):
             self.fetch_count += 1
             if self.fetch_count == 1:
                 return {"id": 4, "pin_hash": "temporary-hash", "pin_reset_required": True}
             return None
+
     @contextmanager
-    def fake_transaction(): yield Cursor()
+    def fake_transaction():
+        yield Cursor()
+
     monkeypatch.setattr(attendance, "transaction", fake_transaction)
     monkeypatch.setattr(attendance.bcrypt, "hashpw", lambda value, salt: b"personal-hash")
     monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda **kwargs: b"salt")
@@ -88,36 +99,51 @@ def test_first_login_pin_reset_updates_visible_pin(monkeypatch):
 
 def test_first_login_pin_must_differ_from_temporary_pin(monkeypatch):
     class Cursor:
-        def execute(self, sql, params=None): pass
-        def fetchone(self): return {"id": 4, "pin_hash": "temporary-hash", "pin_reset_required": True}
+        def execute(self, sql, params=None):
+            pass
+
+        def fetchone(self):
+            return {"id": 4, "pin_hash": "temporary-hash", "pin_reset_required": True}
+
     @contextmanager
-    def fake_transaction(): yield Cursor()
+    def fake_transaction():
+        yield Cursor()
+
     monkeypatch.setattr(attendance, "transaction", fake_transaction)
     monkeypatch.setattr(attendance.bcrypt, "hashpw", lambda value, salt: b"personal-hash")
     monkeypatch.setattr(attendance.bcrypt, "gensalt", lambda **kwargs: b"salt")
     monkeypatch.setattr(attendance.bcrypt, "checkpw", lambda value, hashed: True)
-    with Flask(__name__).app_context(), pytest.raises(ValueError, match="different from the temporary"):
+    with Flask(__name__).app_context(), pytest.raises(
+        ValueError, match="different from the temporary"
+    ):
         attendance.reset_employee_pin(4, "4826", "4826")
 
 
 def test_attendance_login_timestamp_is_serialised_for_display():
-    rows = attendance._serialise_attendance_rows([{
-        "attendance_date": date(2026, 9, 14),
-        "login_timestamp": datetime(2026, 9, 14, 7, 30),
-    }])
+    rows = attendance._serialise_attendance_rows(
+        [
+            {
+                "attendance_date": date(2026, 9, 14),
+                "login_timestamp": datetime(2026, 9, 14, 7, 30),
+            }
+        ]
+    )
     assert rows[0] == {
         "attendance_date": "2026-09-14",
         "login_timestamp": "2026-09-14T07:30",
     }
 
 
-@pytest.mark.parametrize("field,value", [
-    ("paid_break_hours", "0.25"),
-    ("paid_break_hours", "2.5"),
-    ("total_hours", "2.5"),
-    ("total_hours", "12.5"),
-    ("overtime_hours", "0.25"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("paid_break_hours", "0.25"),
+        ("paid_break_hours", "2.5"),
+        ("total_hours", "2.5"),
+        ("total_hours", "12.5"),
+        ("overtime_hours", "0.25"),
+    ],
+)
 def test_attendance_hours_require_valid_half_hour_values(field, value):
     payload = {"row_version": 0, field: value}
     with pytest.raises(ValueError, match="0.5-hour increments"):
@@ -144,12 +170,17 @@ def test_attendance_login_passes_only_pin(monkeypatch):
     monkeypatch.setattr(Config, "SESSION_COOKIE_SECURE", False)
     monkeypatch.setattr(Config, "ALLOWED_HOSTS", {"localhost"})
     received = []
-    monkeypatch.setattr("app.routes.authenticate_employee", lambda pin: received.append(pin) or {"id": 4, "employee_name": "Worker"})
+    monkeypatch.setattr(
+        "app.routes.authenticate_employee",
+        lambda pin: received.append(pin) or {"id": 4, "employee_name": "Worker"},
+    )
     monkeypatch.setattr("app.routes.record_employee_login", lambda employee_id: None)
     monkeypatch.setattr("app.routes.employee_history", lambda employee_id: [])
     client = create_app().test_client()
     token = client.get("/api/csrf").json["token"]
-    response = client.post("/api/attendance/login", json={"pin": "4826"}, headers={"X-CSRF-Token": token})
+    response = client.post(
+        "/api/attendance/login", json={"pin": "4826"}, headers={"X-CSRF-Token": token}
+    )
     assert response.status_code == 200
     assert received == ["4826"]
 
@@ -170,7 +201,10 @@ def test_attendance_login_rate_limits_failed_pins(monkeypatch):
     monkeypatch.setattr(Config, "SESSION_COOKIE_SECURE", False)
     monkeypatch.setattr(Config, "ALLOWED_HOSTS", {"localhost"})
     monkeypatch.setattr(Config, "MANAGER_LOGIN_MAX_ATTEMPTS", 2)
-    monkeypatch.setattr("app.routes.authenticate_employee", lambda pin: (_ for _ in ()).throw(ValueError("Invalid PIN.")))
+    monkeypatch.setattr(
+        "app.routes.authenticate_employee",
+        lambda pin: (_ for _ in ()).throw(ValueError("Invalid PIN.")),
+    )
     client = create_app().test_client()
     token = client.get("/api/csrf").json["token"]
     request = {"json": {"pin": "0000"}, "headers": {"X-CSRF-Token": token}}
@@ -181,34 +215,54 @@ def test_attendance_login_rate_limits_failed_pins(monkeypatch):
 
 def test_employee_submits_daily_hour_values(monkeypatch):
     executed = []
+
     class Cursor:
-        def execute(self, sql, params=None): executed.append((sql, params))
-        def fetchone(self): return {"id": 9}
+        def execute(self, sql, params=None):
+            executed.append((sql, params))
+
+        def fetchone(self):
+            return {"id": 9}
+
     @contextmanager
-    def fake_transaction(): yield Cursor()
+    def fake_transaction():
+        yield Cursor()
+
     monkeypatch.setattr(attendance, "transaction", fake_transaction)
     with Flask(__name__).app_context():
-        attendance.submit_attendance(4, {"paid_break_hours": "0.5", "total_hours": "8.0", "overtime_hours": "1.5"})
-    update = next((params for sql, params in executed if "UPDATE system_import.attendance_records" in sql), None)
+        attendance.submit_attendance(
+            4, {"paid_break_hours": "0.5", "total_hours": "8.0", "overtime_hours": "1.5"}
+        )
+    update = next(
+        (params for sql, params in executed if "UPDATE system_import.attendance_records" in sql),
+        None,
+    )
     assert update[:3] == (0.5, 8.0, 1.5)
 
 
 def test_employee_session_expires_after_five_minutes(monkeypatch):
     from app import create_app
     from app.config import Config
+
     clock = {"now": 1000}
     monkeypatch.setattr("app.db.verify_ui_schema", lambda: None)
     monkeypatch.setattr(Config, "ENVIRONMENT", "development")
     monkeypatch.setattr(Config, "BEHIND_TLS_PROXY", False)
     monkeypatch.setattr(Config, "SESSION_COOKIE_SECURE", False)
     monkeypatch.setattr(Config, "ALLOWED_HOSTS", {"localhost"})
-    monkeypatch.setattr("app.routes.authenticate_employee", lambda pin: {"id": 4, "employee_name": "Worker"})
+    monkeypatch.setattr(
+        "app.routes.authenticate_employee", lambda pin: {"id": 4, "employee_name": "Worker"}
+    )
     monkeypatch.setattr("app.routes.record_employee_login", lambda employee_id: None)
     monkeypatch.setattr("app.routes.employee_history", lambda employee_id: [])
     monkeypatch.setattr("app.routes.time", lambda: clock["now"])
     client = create_app().test_client()
     token = client.get("/api/csrf").json["token"]
-    assert client.post("/api/attendance/login", json={"pin": "4826"}, headers={"X-CSRF-Token": token}).status_code == 200
+    assert (
+        client.post(
+            "/api/attendance/login", json={"pin": "4826"}, headers={"X-CSRF-Token": token}
+        ).status_code
+        == 200
+    )
     clock["now"] = 1301
     assert client.get("/api/attendance/me").status_code == 401
 
@@ -245,7 +299,11 @@ def test_opening_attendance_page_requires_new_login(monkeypatch):
 def test_employee_page_replaces_clock_buttons_with_hour_selectors():
     root = __import__("pathlib").Path(attendance.__file__).parents[1]
     template = (root / "templates" / "attendance.html").read_text(encoding="utf-8")
-    assert "paid_break_hours" in template and "total_hours" in template and "overtime_hours" in template
+    assert (
+        "paid_break_hours" in template
+        and "total_hours" in template
+        and "overtime_hours" in template
+    )
     assert "Clock in / 上班打卡" not in template
     assert "5 minutes after login" in template
     assert "Every new page visit requires login" in template
@@ -264,7 +322,7 @@ def test_manager_attendance_uses_one_login_timestamp_and_add_record():
     assert "new-attendance-record" in dashboard
     assert "attendance-record-form" in dashboard
     record_dialog = dashboard.split('id="attendance-record-dialog"', 1)[1]
-    record_dialog = record_dialog.split('</dialog>', 1)[0]
+    record_dialog = record_dialog.split("</dialog>", 1)[0]
     assert "Status / 状态" not in record_dialog
     assert "attendance-employee-options" in source
 
@@ -281,11 +339,15 @@ def test_employee_login_creates_first_daily_timestamp(monkeypatch):
         yield Cursor()
 
     monkeypatch.setattr(attendance, "transaction", fake_transaction)
-    monkeypatch.setattr(attendance, "datetime", type(
-        "FixedDateTime",
-        (),
-        {"now": staticmethod(lambda: datetime(2026, 9, 15, 8, 12))},
-    ))
+    monkeypatch.setattr(
+        attendance,
+        "datetime",
+        type(
+            "FixedDateTime",
+            (),
+            {"now": staticmethod(lambda: datetime(2026, 9, 15, 8, 12))},
+        ),
+    )
     with Flask(__name__).app_context():
         attendance.record_employee_login(4)
 
@@ -325,7 +387,12 @@ def test_attendance_export_is_employee_by_date_matrix(monkeypatch):
     ]
     monkeypatch.setattr(attendance, "list_attendance", lambda **kwargs: (rows, 2))
 
-    workbook = load_workbook(attendance.export_attendance())
+    workbook = load_workbook(
+        attendance.export_attendance(
+            start_date="2026-09-14",
+            end_date="2026-09-15",
+        )
+    )
     assert workbook.sheetnames == ["General", "Slurry"]
     sheet = workbook["General"]
 
@@ -366,7 +433,12 @@ def test_attendance_export_keeps_weekend_days_separate_and_uses_zero(monkeypatch
     ]
     monkeypatch.setattr(attendance, "list_attendance", lambda **kwargs: (rows, 2))
 
-    sheet = load_workbook(attendance.export_attendance())["General"]
+    sheet = load_workbook(
+        attendance.export_attendance(
+            start_date="2026-09-18",
+            end_date="2026-09-21",
+        )
+    )["General"]
     assert [sheet.cell(2, column).value for column in range(3, 7)] == ["Fri", "Sat", "Sun", "Mon"]
     assert sheet["D3"].value == 0
     assert sheet["E3"].value == 0
@@ -397,7 +469,12 @@ def test_attendance_export_sorts_employee_names_alphabetically(monkeypatch):
     ]
     monkeypatch.setattr(attendance, "list_attendance", lambda **kwargs: (rows, 2))
 
-    workbook = load_workbook(attendance.export_attendance())
+    workbook = load_workbook(
+        attendance.export_attendance(
+            start_date="2026-09-21",
+            end_date="2026-09-21",
+        )
+    )
     assert [workbook["General"][cell].value for cell in ("B3", "B4")] == ["amy Li", "Zoey Chen"]
     assert [workbook["Slurry"][cell].value for cell in ("B3", "B4")] == ["amy Li", "Zoey Chen"]
 
@@ -427,7 +504,12 @@ def test_attendance_export_creates_safe_unique_department_sheets(monkeypatch):
     ]
     monkeypatch.setattr(attendance, "list_attendance", lambda **kwargs: (rows, 2))
 
-    workbook = load_workbook(attendance.export_attendance())
+    workbook = load_workbook(
+        attendance.export_attendance(
+            start_date="2026-09-15",
+            end_date="2026-09-15",
+        )
+    )
 
     assert workbook.sheetnames == [
         "General",
@@ -436,3 +518,23 @@ def test_attendance_export_creates_safe_unique_department_sheets(monkeypatch):
     ]
     assert workbook["Slurry-Production"]["B3"].value == "Employee A"
     assert workbook["Slurry-Production (2)"]["B3"].value == "Employee B"
+
+
+@pytest.mark.parametrize(
+    ("start_date", "end_date", "message"),
+    [
+        (None, None, "Choose both"),
+        ("2026-09-20", "2026-09-19", "cannot be after"),
+        ("not-a-date", "2026-09-19", "valid attendance export dates"),
+    ],
+)
+def test_attendance_export_requires_valid_date_range(
+    start_date,
+    end_date,
+    message,
+):
+    with pytest.raises(ValueError, match=message):
+        attendance.export_attendance(
+            start_date=start_date,
+            end_date=end_date,
+        )

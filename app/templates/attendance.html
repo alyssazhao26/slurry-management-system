@@ -1,93 +1,93 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GNEM Attendance</title>
-  <link rel="stylesheet" href="/static/attendance.css?v=20260914-hidden-fix">
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <h1>GNEM Attendance / 考勤</h1>
-        <p>Submit daily work hours / 提交每日工时</p>
-      </div>
-    </header>
-
-    <section id="employee-login" class="card">
-      <h2>Employee sign in / 员工登录</h2>
-      <form id="employee-login-form">
-        <label>
-          4-digit PIN / 4位密码
-          <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
-                 minlength="4" maxlength="4" autocomplete="current-password" required>
-        </label>
-        <button>Sign in / 登录</button>
-      </form>
-    </section>
-
-    <section id="employee-panel" class="card" hidden>
-      <div class="row">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GNEM Attendance</title>
+    <link rel="stylesheet" href="/static/attendance.css?v=20260914-hidden-fix">
+  </head>
+  <body>
+    <main>
+      <header>
         <div>
-          <h2 id="employee-name"></h2>
-          <small>Automatically signs out 5 minutes after login. Every new page visit requires login. / 登录5分钟后自动退出；每次重新打开页面均需登录。</small>
+          <h1>GNEM Attendance / 考勤</h1>
+          <p>Submit daily work hours / 提交每日工时</p>
         </div>
-        <button id="employee-logout" class="secondary">Sign out / 退出</button>
-      </div>
+      </header>
+
+      <section id="employee-login" class="card">
+        <h2>Employee sign in / 员工登录</h2>
+        <form id="employee-login-form">
+          <label>
+            4-digit PIN / 4位密码
+            <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
+                   minlength="4" maxlength="4" autocomplete="current-password" required>
+          </label>
+          <button>Sign in / 登录</button>
+        </form>
+      </section>
+
+      <section id="employee-panel" class="card" hidden>
+        <div class="row">
+          <div>
+            <h2 id="employee-name"></h2>
+            <small>Automatically signs out 5 minutes after login. Every new page visit requires login. / 登录5分钟后自动退出；每次重新打开页面均需登录。</small>
+          </div>
+          <button id="employee-logout" class="secondary">Sign out / 退出</button>
+        </div>
 
       <!-- The server also enforces this gate; hiding the hours form is not the security boundary. -->
-      <form id="first-login-pin-form" class="pin-reset-panel" hidden>
-        <h3>Set your personal PIN / 设置个人密码</h3>
-        <p>
-          Your manager-assigned PIN is temporary. Choose a different, unique four-digit PIN.
-          This step appears only after your first login or a manager PIN reset. /
-          管理员分配的密码是临时密码。请选择一个不同且唯一的四位数字密码。
-          此步骤仅在首次登录或管理员重置密码后出现。
-        </p>
-        <div class="pin-reset-grid">
-          <label>
-            New 4-digit PIN / 新四位密码
-            <input name="new_pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
-                   minlength="4" maxlength="4" autocomplete="new-password" required>
-          </label>
-          <label>
-            Confirm new PIN / 确认新密码
-            <input name="confirm_pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
-                   minlength="4" maxlength="4" autocomplete="new-password" required>
-          </label>
-        </div>
-        <button type="submit">Save new PIN / 保存新密码</button>
-      </form>
-
-      <div id="attendance-entry">
-        <form id="attendance-form">
-          <div class="hours-grid">
+        <form id="first-login-pin-form" class="pin-reset-panel" hidden>
+          <h3>Set your personal PIN / 设置个人密码</h3>
+          <p>
+            Your manager-assigned PIN is temporary. Choose a different, unique four-digit PIN.
+            This step appears only after your first login or a manager PIN reset. /
+            管理员分配的密码是临时密码。请选择一个不同且唯一的四位数字密码。
+            此步骤仅在首次登录或管理员重置密码后出现。
+          </p>
+          <div class="pin-reset-grid">
             <label>
-              Paid break hours / 带薪休息时数
-              <select name="paid_break_hours" required></select>
+              New 4-digit PIN / 新四位密码
+              <input name="new_pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
+                     minlength="4" maxlength="4" autocomplete="new-password" required>
             </label>
             <label>
-              Total hours / 总工时
-              <select name="total_hours" required></select>
-            </label>
-            <label>
-              Overtime hours / 加班工时
-              <select name="overtime_hours"></select>
-              <input name="overtime_hours_custom" type="number" min="0.5" max="24" step="0.5"
-                     placeholder="Enter 0.5-hour increment / 输入0.5小时倍数" hidden>
+              Confirm new PIN / 确认新密码
+              <input name="confirm_pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
+                     minlength="4" maxlength="4" autocomplete="new-password" required>
             </label>
           </div>
-          <button type="submit">Save today's hours / 保存今日工时</button>
+          <button type="submit">Save new PIN / 保存新密码</button>
         </form>
 
-        <h3>Recent attendance / 最近考勤</h3>
-        <div id="employee-history"></div>
-      </div>
-    </section>
+        <div id="attendance-entry">
+          <form id="attendance-form">
+            <div class="hours-grid">
+              <label>
+                Paid break hours / 带薪休息时数
+                <select name="paid_break_hours" required></select>
+              </label>
+              <label>
+                Total hours / 总工时
+                <select name="total_hours" required></select>
+              </label>
+              <label>
+                Overtime hours / 加班工时
+                <select name="overtime_hours"></select>
+                <input name="overtime_hours_custom" type="number" min="0.5" max="24" step="0.5"
+                       placeholder="Enter 0.5-hour increment / 输入0.5小时倍数" hidden>
+              </label>
+            </div>
+            <button type="submit">Save today's hours / 保存今日工时</button>
+          </form>
 
-    <p id="status" role="status"></p>
-  </main>
-  <script src="/static/attendance.js?v=20260915-fast-pin"></script>
-</body>
+          <h3>Recent attendance / 最近考勤</h3>
+          <div id="employee-history"></div>
+        </div>
+      </section>
+
+      <p id="status" role="status"></p>
+    </main>
+    <script src="/static/attendance.js?v=20260915-fast-pin"></script>
+  </body>
 </html>

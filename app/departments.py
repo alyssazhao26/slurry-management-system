@@ -1,30 +1,52 @@
 """Department context is request-local; never change shared Flask configuration."""
+
 from contextlib import contextmanager
 from flask import current_app, g, has_app_context, has_request_context, request, abort
 
-DEPARTMENTS = {'slurry': 'Slurry / 制浆', 'slitting': 'Slitting / 分切'}
+DEPARTMENTS = {
+    "slurry": "Slurry / 制浆",
+    "slitting": "Slitting / 分切",
+    "coating": "Coating / 涂布",
+}
+ROLL_DEPARTMENTS = {"slitting", "coating"}
+
+
+def uses_slitting_workflow(value=None):
+    return (value or current_department()) in ROLL_DEPARTMENTS
+
 
 def current_department():
     if not has_app_context():
-        return 'slurry'
-    return getattr(g, 'department', 'slurry')
+        return "slurry"
+    return getattr(g, "department", "slurry")
+
 
 def select_request_department():
-    value = request.headers.get('X-Department') or request.args.get('department') or 'slurry'
-    if request.path.startswith(('/inventory/', '/api/inventory')):
-        value = 'slitting'  # QR links always resolve in the inventory-owning department.
+    explicit = request.headers.get("X-Department") or request.args.get("department")
+    value = explicit or "slurry"
+    if request.path.startswith(("/inventory/", "/api/inventory")):
+        # Old Slitting QR labels contain no department query and must keep working.
+        value = explicit or "slitting"
+        if value not in ROLL_DEPARTMENTS:
+            abort(400, "Inventory is available only for Slitting or Coating.")
     if value not in DEPARTMENTS:
-        abort(400, 'Unknown department.')
-    if request.is_json and request.method in {'POST','PATCH','PUT'}:
+        abort(400, "Unknown department.")
+    if request.is_json and request.method in {"POST", "PATCH", "PUT"}:
         payload = request.get_json(silent=True)
-        if isinstance(payload, dict) and 'department' in payload and request.path != '/api/manager/department' and payload['department'] != value:
-            abort(400, 'Record department does not match this request.')
+        if (
+            isinstance(payload, dict)
+            and "department" in payload
+            and request.path != "/api/manager/department"
+            and payload["department"] != value
+        ):
+            abort(400, "Record department does not match this request.")
     g.department = value
+
 
 @contextmanager
 def department_context(value):
     if value not in DEPARTMENTS:
-        raise ValueError('Unknown department.')
+        raise ValueError("Unknown department.")
     previous = current_department()
     g.department = value
     try:
@@ -32,15 +54,20 @@ def department_context(value):
     finally:
         g.department = previous
 
+
 def database_config():
-    if current_department() == 'slitting':
-        return dict(current_app.config['SLITTING_DB'])
-    return dict(current_app.config['DB'])
+    if current_department() == "slitting":
+        return dict(current_app.config["SLITTING_DB"])
+    if current_department() == "coating":
+        return dict(current_app.config["COATING_DB"])
+    return dict(current_app.config["DB"])
+
 
 def import_schema():
-    key = 'SLITTING_IMPORT_SCHEMA' if current_department() == 'slitting' else 'IMPORT_SCHEMA'
+    key = "SLITTING_IMPORT_SCHEMA" if uses_slitting_workflow() else "IMPORT_SCHEMA"
     schema = current_app.config[key]
     import re
-    if not re.fullmatch(r'[A-Za-z0-9_]+', schema):
-        raise RuntimeError('Invalid import schema configuration.')
+
+    if not re.fullmatch(r"[A-Za-z0-9_]+", schema):
+        raise RuntimeError("Invalid import schema configuration.")
     return schema

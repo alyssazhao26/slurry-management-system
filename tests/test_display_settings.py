@@ -62,7 +62,11 @@ def test_display_sizes_snap_to_supported_grid(monkeypatch):
 
 
 def test_pending_qualification_block_is_a_visible_one_by_one_default():
-    block = next(item for item in records.default_display_settings()["blocks"] if item["key"] == "pending_qualification")
+    block = next(
+        item
+        for item in records.default_display_settings()["blocks"]
+        if item["key"] == "pending_qualification"
+    )
 
     assert block["visible"] is True
     assert block["width"] == 1

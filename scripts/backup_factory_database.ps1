@@ -19,8 +19,12 @@ if (-not (Test-Path -LiteralPath $envFile)) { throw "Missing .env file." }
 
 function Get-ProjectSetting([string]$Name, [string]$Default = "") {
     $settingLines = @(Get-Content -LiteralPath $envFile)
-    if (Test-Path -LiteralPath $departmentEnvFile) { $settingLines += Get-Content -LiteralPath $departmentEnvFile }
-    $match = $settingLines | Where-Object { $_ -match "^$([regex]::Escape($Name))=" } | Select-Object -Last 1
+    if (Test-Path -LiteralPath $departmentEnvFile) {
+        $settingLines += Get-Content -LiteralPath $departmentEnvFile
+    }
+    $match = $settingLines |
+        Where-Object { $_ -match "^$([regex]::Escape($Name))=" } |
+        Select-Object -Last 1
     if (-not $match) { return $Default }
     return $match.Substring($Name.Length + 1).Trim().Trim('"').Trim("'").Trim()
 }
@@ -50,10 +54,17 @@ if ($Department -eq "slitting") {
         $dbPassword = $slittingBackupPassword
     }
 }
-if (-not $dbUser -or -not $dbPassword) { throw "Set DB_USER/DB_PASSWORD or DB_BACKUP_USER/DB_BACKUP_PASSWORD in .env." }
+if (-not $dbUser -or -not $dbPassword) {
+    throw "Set DB_USER/DB_PASSWORD or DB_BACKUP_USER/DB_BACKUP_PASSWORD in .env."
+}
 $resolvedBackupDirectory = [IO.Path]::GetFullPath($backupDirectory).TrimEnd('\\')
 $resolvedProjectRoot = [IO.Path]::GetFullPath($projectRoot).TrimEnd('\\')
-if ($resolvedBackupDirectory.StartsWith($resolvedProjectRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "Use a dedicated backup directory outside the project folder." }
+if ($resolvedBackupDirectory.StartsWith(
+    $resolvedProjectRoot,
+    [StringComparison]::OrdinalIgnoreCase
+)) {
+    throw "Use a dedicated backup directory outside the project folder."
+}
 
 $configuredDumpPath = Get-ProjectSetting "MYSQLDUMP_PATH" $env:MYSQLDUMP_PATH
 if ($configuredDumpPath) {
@@ -70,9 +81,40 @@ $backupFile = Join-Path $backupDirectory "gnem_backup_${Department}_$stamp.sql"
 $optionFile = Join-Path $env:TEMP ("gnem-mysql-" + [guid]::NewGuid().ToString("N") + ".cnf")
 
 try {
-    [string]::Join([Environment]::NewLine, @("[client]", "user=$dbUser", "password=$dbPassword", "host=$dbHost", "port=$dbPort")) | Set-Content -LiteralPath $optionFile -Encoding ascii -NoNewline
-    & $dumpCommand "--defaults-extra-file=$optionFile" "--single-transaction" "--routines" "--events" "--databases" $dbName $importSchema "--result-file=$backupFile"
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $backupFile) -or (Get-Item -LiteralPath $backupFile).Length -eq 0) {
+    $clientSettings = @(
+        "[client]"
+        "user=$dbUser"
+        "password=$dbPassword"
+        "host=$dbHost"
+        "port=$dbPort"
+    )
+    [string]::Join(
+        [Environment]::NewLine,
+        $clientSettings
+    ) | Set-Content -LiteralPath $optionFile -Encoding ascii -NoNewline
+
+    # --skip-extended-insert writes one INSERT statement per row instead of
+    # producing extremely long multi-row lines. The dump remains directly
+    # restorable by MySQL and is substantially easier to review.
+    $dumpArguments = @(
+        "--defaults-extra-file=$optionFile"
+        "--single-transaction"
+        "--routines"
+        "--events"
+        "--skip-extended-insert"
+        "--databases"
+        $dbName
+        $importSchema
+        "--result-file=$backupFile"
+    )
+    & $dumpCommand @dumpArguments
+
+    $backupIsInvalid = (
+        $LASTEXITCODE -ne 0 -or
+        -not (Test-Path -LiteralPath $backupFile) -or
+        (Get-Item -LiteralPath $backupFile).Length -eq 0
+    )
+    if ($backupIsInvalid) {
         throw "mysqldump failed; no valid backup was accepted."
     }
     Get-ChildItem -LiteralPath $backupDirectory -Filter "gnem_backup_${Department}_*.sql" -File |

@@ -3,7 +3,16 @@ import io
 from functools import lru_cache, wraps
 from hmac import compare_digest
 from time import monotonic, time
-from flask import Blueprint, current_app, jsonify, render_template, request, session, send_file
+from flask import (
+    Blueprint,
+    current_app,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    send_file,
+)
 import qrcode
 
 from .services.records import (
@@ -33,13 +42,44 @@ from .services.records import (
     update_tracker,
 )
 from .services.backups import run_manual_backup
-from .services.attendance import active_employee_options, authenticate_employee, create_attendance, delete_employee, employee_history, export_attendance, list_attendance, list_employees, record_employee_login, reset_employee_pin, save_employee, submit_attendance, update_attendance
+from .services.attendance import (
+    active_employee_options,
+    authenticate_employee,
+    create_attendance,
+    delete_employee,
+    employee_history,
+    export_attendance,
+    list_attendance,
+    list_employees,
+    record_employee_login,
+    reset_employee_pin,
+    save_employee,
+    submit_attendance,
+    update_attendance,
+)
 
-from .services.inventory import (check_out_product, get_product_by_token, inventory_summary, make_qr_png, register_product, register_small_roll)
-from .departments import current_department, DEPARTMENTS, department_context
-from .services.slitting import summary as slitting_summary, model_specs, save_model_spec, event_categories, save_event_category, machine_choices, shift_choices
+from .services.inventory import (
+    check_out_product,
+    get_product_by_token,
+    inventory_summary,
+    make_qr_png,
+    register_product,
+    register_small_roll,
+)
+from .departments import current_department, DEPARTMENTS, department_context, uses_slitting_workflow
+from .services.slitting import (
+    summary as slitting_summary,
+    model_specs,
+    save_model_spec,
+    event_categories,
+    save_event_category,
+    deactivate_event_category,
+    machine_choices,
+    shift_choices,
+)
 
 web = Blueprint("web", __name__)
+MAIN_PAGE_DEPARTMENTS = {key: value for key, value in DEPARTMENTS.items() if key != "coating"}
 
 
 def require_manager(fn):
@@ -54,33 +94,53 @@ def require_manager(fn):
 
 @web.get("/")
 def dashboard():
+    if current_department() == "coating":
+        return redirect("/?department=slitting")
     return render_template("dashboard.html")
 
-@web.get('/attendance')
+
+@web.get("/attendance")
 def attendance_page():
     # A new QR scan, page open, or refresh must always begin with employee login.
     clear_attendance_session()
-    return render_template('attendance.html')
+    return render_template("attendance.html")
 
-@web.get('/attendance/qr')
+
+@web.get("/attendance/qr")
 @require_manager
 def attendance_qr():
-    if current_department() != 'slurry': return jsonify(error='Attendance is available only for Slurry.'),404
-    display_host=current_app.config['DISPLAY_HTTP_HOST']
-    if display_host in {'0.0.0.0','::','127.0.0.1','localhost'}: display_host=''
-    configured_http_base=f"http://{display_host}:{current_app.config['DISPLAY_HTTP_PORT']}" if display_host else ''
-    base=configured_http_base or current_app.config['QR_PUBLIC_BASE_URL'] or request.url_root.rstrip('/')
-    if request.args.get('base_url'):
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
+    display_host = current_app.config["DISPLAY_HTTP_HOST"]
+    if display_host in {"0.0.0.0", "::", "127.0.0.1", "localhost"}:
+        display_host = ""
+    configured_http_base = (
+        f"http://{display_host}:{current_app.config['DISPLAY_HTTP_PORT']}" if display_host else ""
+    )
+    base = (
+        configured_http_base
+        or current_app.config["QR_PUBLIC_BASE_URL"]
+        or request.url_root.rstrip("/")
+    )
+    if request.args.get("base_url"):
         from urllib.parse import urlparse
-        candidate=request.args['base_url'].strip().rstrip('/');parsed=urlparse(candidate)
-        if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.hostname.lower() in {'localhost','127.0.0.1','::1'}:
-            return jsonify(error='Enter the LAN HTTP address that employee phones can reach.'),400
-        if parsed.scheme == 'https' and configured_http_base:
+
+        candidate = request.args["base_url"].strip().rstrip("/")
+        parsed = urlparse(candidate)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}
+        ):
+            return jsonify(error="Enter the LAN HTTP address that employee phones can reach."), 400
+        if parsed.scheme == "https" and configured_http_base:
             candidate = configured_http_base
-        base=candidate
-    attendance_url=base+'/attendance'
-    response=send_file(io.BytesIO(_attendance_qr_png(attendance_url)),mimetype='image/png',max_age=300)
-    response.headers['X-Attendance-URL']=attendance_url
+        base = candidate
+    attendance_url = base + "/attendance"
+    response = send_file(
+        io.BytesIO(_attendance_qr_png(attendance_url)), mimetype="image/png", max_age=300
+    )
+    response.headers["X-Attendance-URL"] = attendance_url
     return response
 
 
@@ -88,181 +148,249 @@ def attendance_qr():
 def _attendance_qr_png(attendance_url):
     """Generate each attendance URL once so repeated manager loads are immediate."""
     output = io.BytesIO()
-    qrcode.make(attendance_url).save(output, format='PNG')
+    qrcode.make(attendance_url).save(output, format="PNG")
     return output.getvalue()
 
-@web.post('/api/attendance/login')
+
+@web.post("/api/attendance/login")
 def attendance_login():
-    payload=request.get_json() or {}
-    attempts=current_app.extensions["manager_login_attempts"];key=f"attendance:{request.remote_addr or 'unknown'}";now=monotonic();window=current_app.config["MANAGER_LOGIN_WINDOW_SECONDS"];bucket=attempts[key]
-    while bucket and bucket[0]<=now-window: bucket.popleft()
-    if len(bucket)>=current_app.config["MANAGER_LOGIN_MAX_ATTEMPTS"]: return jsonify(error='Too many PIN attempts. Wait five minutes and try again.'),429
+    payload = request.get_json() or {}
+    attempts = current_app.extensions["manager_login_attempts"]
+    key = f"attendance:{request.remote_addr or 'unknown'}"
+    now = monotonic()
+    window = current_app.config["MANAGER_LOGIN_WINDOW_SECONDS"]
+    bucket = attempts[key]
+    while bucket and bucket[0] <= now - window:
+        bucket.popleft()
+    if len(bucket) >= current_app.config["MANAGER_LOGIN_MAX_ATTEMPTS"]:
+        return jsonify(error="Too many PIN attempts. Wait five minutes and try again."), 429
     try:
-        employee=authenticate_employee(payload.get('pin'))
-        record_employee_login(employee['id'])
-    except ValueError as exc: bucket.append(now);return jsonify(error=str(exc)),401
-    attempts.pop(key,None)
-    session['attendance_employee_id'] = employee['id']
-    session['attendance_employee'] = employee
-    session['attendance_expires_at'] = int(time()) + 300
+        employee = authenticate_employee(payload.get("pin"))
+        record_employee_login(employee["id"])
+    except ValueError as exc:
+        bucket.append(now)
+        return jsonify(error=str(exc)), 401
+    attempts.pop(key, None)
+    session["attendance_employee_id"] = employee["id"]
+    session["attendance_employee"] = employee
+    session["attendance_expires_at"] = int(time()) + 300
     session.permanent = True
     return jsonify(
         employee=employee,
-        records=employee_history(employee['id']),
-        expires_at=session['attendance_expires_at'],
+        records=employee_history(employee["id"]),
+        expires_at=session["attendance_expires_at"],
     )
 
 
 def clear_attendance_session():
     """Remove only employee attendance authentication from the shared session."""
-    session.pop('attendance_employee_id', None)
-    session.pop('attendance_employee', None)
-    session.pop('attendance_expires_at', None)
+    session.pop("attendance_employee_id", None)
+    session.pop("attendance_employee", None)
+    session.pop("attendance_expires_at", None)
+
 
 def attendance_session_employee():
-    if not session.get('attendance_employee_id'): return None
-    if int(session.get('attendance_expires_at') or 0) <= int(time()):
+    if not session.get("attendance_employee_id"):
+        return None
+    if int(session.get("attendance_expires_at") or 0) <= int(time()):
         clear_attendance_session()
         return None
-    return session.get('attendance_employee')
+    return session.get("attendance_employee")
 
-@web.post('/api/attendance/logout')
+
+@web.post("/api/attendance/logout")
 def attendance_logout():
     clear_attendance_session()
     return jsonify(ok=True)
 
-@web.get('/api/attendance/me')
-def attendance_me():
-    employee=attendance_session_employee()
-    if not employee: return jsonify(error='Employee session expired. Sign in again.'),401
-    return jsonify(employee=employee,records=employee_history(session['attendance_employee_id']),expires_at=session['attendance_expires_at'])
 
-@web.post('/api/attendance/records')
+@web.get("/api/attendance/me")
+def attendance_me():
+    employee = attendance_session_employee()
+    if not employee:
+        return jsonify(error="Employee session expired. Sign in again."), 401
+    return jsonify(
+        employee=employee,
+        records=employee_history(session["attendance_employee_id"]),
+        expires_at=session["attendance_expires_at"],
+    )
+
+
+@web.post("/api/attendance/records")
 def attendance_submit():
-    employee=attendance_session_employee()
-    if not employee: return jsonify(error='Employee session expired. Sign in again.'),401
-    if employee.get('pin_reset_required',True): return jsonify(error='Set your new PIN before saving attendance.'),403
+    employee = attendance_session_employee()
+    if not employee:
+        return jsonify(error="Employee session expired. Sign in again."), 401
+    if employee.get("pin_reset_required", True):
+        return jsonify(error="Set your new PIN before saving attendance."), 403
     try:
         attendance_date = submit_attendance(
-            session['attendance_employee_id'],
+            session["attendance_employee_id"],
             request.get_json() or {},
         )
         return jsonify(
-            message='Attendance saved.',
+            message="Attendance saved.",
             attendance_date=attendance_date,
             employee=employee,
-            records=employee_history(session['attendance_employee_id']),
-            expires_at=session['attendance_expires_at'],
+            records=employee_history(session["attendance_employee_id"]),
+            expires_at=session["attendance_expires_at"],
         )
-    except ValueError as exc: return jsonify(error=str(exc)),400
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
 
-@web.post('/api/attendance/reset-pin')
+
+@web.post("/api/attendance/reset-pin")
 def attendance_reset_pin():
-    employee=attendance_session_employee()
-    if not employee: return jsonify(error='Employee session expired. Sign in again.'),401
-    if not employee.get('pin_reset_required',True): return jsonify(error='First-login PIN setup has already been completed.'),409
-    payload=request.get_json() or {}
-    try: reset_employee_pin(session['attendance_employee_id'],payload.get('new_pin'),payload.get('confirm_pin'))
-    except ValueError as exc: return jsonify(error=str(exc)),400
-    employee={**employee,'pin_reset_required':False};session['attendance_employee']=employee
-    return jsonify(message='New PIN saved.',employee=employee,expires_at=session['attendance_expires_at'])
+    employee = attendance_session_employee()
+    if not employee:
+        return jsonify(error="Employee session expired. Sign in again."), 401
+    if not employee.get("pin_reset_required", True):
+        return jsonify(error="First-login PIN setup has already been completed."), 409
+    payload = request.get_json() or {}
+    try:
+        reset_employee_pin(
+            session["attendance_employee_id"], payload.get("new_pin"), payload.get("confirm_pin")
+        )
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    employee = {**employee, "pin_reset_required": False}
+    session["attendance_employee"] = employee
+    return jsonify(
+        message="New PIN saved.", employee=employee, expires_at=session["attendance_expires_at"]
+    )
 
-@web.get('/api/manager/attendance')
+
+@web.get("/api/manager/attendance")
 @require_manager
 def manager_attendance():
-    if current_department() != 'slurry': return jsonify(error='Attendance is available only for Slurry.'),404
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
     try:
-        page = max(1, int(request.args.get('page', '1')))
+        page = max(1, int(request.args.get("page", "1")))
         rows, total = list_attendance(
             page=page,
             page_size=50,
-            staffing_company=(request.args.get('staffing_company') or '').strip()
-            or None,
-            employee_name=(request.args.get('employee_name') or '').strip()
-            or None,
-            start_date=(request.args.get('start_date') or '').strip() or None,
-            end_date=(request.args.get('end_date') or '').strip() or None,
+            staffing_company=(request.args.get("staffing_company") or "").strip() or None,
+            employee_name=(request.args.get("employee_name") or "").strip() or None,
+            start_date=(request.args.get("start_date") or "").strip() or None,
+            end_date=(request.args.get("end_date") or "").strip() or None,
         )
-        return jsonify(records=rows,page=page,page_size=50,total=total)
-    except ValueError as exc:return jsonify(error=str(exc)),400
+        return jsonify(records=rows, page=page, page_size=50, total=total)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
 
 
-@web.post('/api/manager/attendance')
+@web.post("/api/manager/attendance")
 @require_manager
 def manager_attendance_create():
-    if current_department() != 'slurry':
-        return jsonify(error='Attendance is available only for Slurry.'),404
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
     try:
         create_attendance(request.get_json() or {})
-        return jsonify(ok=True),201
+        return jsonify(ok=True), 201
     except ValueError as exc:
-        return jsonify(error=str(exc)),400
+        return jsonify(error=str(exc)), 400
 
-@web.get('/api/manager/attendance-export')
+
+@web.get("/api/manager/attendance-export")
 @require_manager
 def manager_attendance_export():
-    if current_department() != 'slurry': return jsonify(error='Attendance is available only for Slurry.'),404
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
     try:
+        start_date = (request.args.get("start_date") or "").strip()
+        end_date = (request.args.get("end_date") or "").strip()
         output = export_attendance(
-            staffing_company=(request.args.get('staffing_company') or '').strip()
-            or None,
-            employee_name=(request.args.get('employee_name') or '').strip()
-            or None,
-            start_date=(request.args.get('start_date') or '').strip() or None,
-            end_date=(request.args.get('end_date') or '').strip() or None,
+            staffing_company=(request.args.get("staffing_company") or "").strip() or None,
+            employee_name=(request.args.get("employee_name") or "").strip() or None,
+            start_date=start_date,
+            end_date=end_date,
         )
-        return send_file(output,as_attachment=True,download_name='GNEM_Attendance.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    except ValueError as exc:return jsonify(error=str(exc)),400
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=(f"GNEM_Attendance_{start_date}_to_{end_date}.xlsx"),
+            mimetype=("application/vnd.openxmlformats-officedocument." "spreadsheetml.sheet"),
+        )
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
 
-@web.patch('/api/manager/attendance/<int:record_id>')
+
+@web.patch("/api/manager/attendance/<int:record_id>")
 @require_manager
 def manager_attendance_update(record_id):
-    if current_department() != 'slurry': return jsonify(error='Attendance is available only for Slurry.'),404
-    try:update_attendance(record_id,request.get_json() or {});return jsonify(ok=True)
-    except ValueError as exc:return jsonify(error=str(exc)),409
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
+    try:
+        update_attendance(record_id, request.get_json() or {})
+        return jsonify(ok=True)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 409
 
-@web.get('/api/manager/attendance-employees')
+
+@web.get("/api/manager/attendance-employees")
 @require_manager
 def manager_attendance_employees():
-    if current_department() != 'slurry': return jsonify(error='Attendance is available only for Slurry.'),404
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
     try:
-        page=max(1,int(request.args.get('page','1')));rows,total=list_employees(page=page,page_size=50,query=request.args.get('query'))
-        return jsonify(employees=rows,page=page,page_size=50,total=total)
-    except ValueError:return jsonify(error='Page must be a whole number.'),400
+        page = max(1, int(request.args.get("page", "1")))
+        rows, total = list_employees(page=page, page_size=50, query=request.args.get("query"))
+        return jsonify(employees=rows, page=page, page_size=50, total=total)
+    except ValueError:
+        return jsonify(error="Page must be a whole number."), 400
 
 
-@web.get('/api/manager/attendance-employee-options')
+@web.get("/api/manager/attendance-employee-options")
 @require_manager
 def manager_attendance_employee_options():
-    if current_department() != 'slurry':
-        return jsonify(error='Attendance is available only for Slurry.'),404
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
     return jsonify(employees=active_employee_options())
 
-@web.post('/api/manager/attendance-employees')
+
+@web.post("/api/manager/attendance-employees")
 @require_manager
 def manager_attendance_employee_create():
-    if current_department() != 'slurry': return jsonify(error='Attendance is available only for Slurry.'),404
-    try:save_employee(request.get_json() or {});return jsonify(ok=True),201
-    except ValueError as exc:return jsonify(error=str(exc)),400
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
+    try:
+        save_employee(request.get_json() or {})
+        return jsonify(ok=True), 201
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
 
-@web.patch('/api/manager/attendance-employees/<int:employee_id>')
+
+@web.patch("/api/manager/attendance-employees/<int:employee_id>")
 @require_manager
 def manager_attendance_employee_update(employee_id):
-    if current_department() != 'slurry': return jsonify(error='Attendance is available only for Slurry.'),404
-    try:save_employee(request.get_json() or {},employee_id);return jsonify(ok=True)
-    except ValueError as exc:return jsonify(error=str(exc)),400
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
+    try:
+        save_employee(request.get_json() or {}, employee_id)
+        return jsonify(ok=True)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
 
-@web.delete('/api/manager/attendance-employees/<int:employee_id>')
+
+@web.delete("/api/manager/attendance-employees/<int:employee_id>")
 @require_manager
 def manager_attendance_employee_delete(employee_id):
-    if current_department() != 'slurry': return jsonify(error='Attendance is available only for Slurry.'),404
+    if current_department() != "slurry":
+        return jsonify(error="Attendance is available only for Slurry."), 404
     try:
-        action=delete_employee(employee_id);return jsonify(ok=True,message=f'Employee {action}.')
-    except ValueError as exc:return jsonify(error=str(exc)),404
+        action = delete_employee(employee_id)
+        return jsonify(ok=True, message=f"Employee {action}.")
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 404
+
 
 @web.get("/display")
 def public_display():
-    return render_template("slitting_display.html" if current_department() == "slitting" else "public_display.html")
+    return render_template(
+        "slitting_display.html" if uses_slitting_workflow() else "public_display.html"
+    )
+
 
 @web.get("/inventory/scan/<token>")
 def inventory_scan_page(token):
@@ -271,6 +399,7 @@ def inventory_scan_page(token):
     except ValueError:
         product = None
     return render_template("inventory_scan.html", token=token, product=product)
+
 
 @web.get("/api/inventory")
 def inventory():
@@ -281,21 +410,25 @@ def inventory():
             value = request.args.get(key, "").strip()
             if value:
                 from datetime import date
+
                 date.fromisoformat(value)
-        return jsonify(inventory_summary(
-            product_page=product_page,
-            transaction_page=transaction_page,
-            page_size=20,
-            product_query=request.args.get("product_query", "").strip() or None,
-            product_width=request.args.get("product_width", "").strip() or None,
-            product_status=request.args.get("product_status", "").strip() or None,
-            checkout_date=request.args.get("checkout_date", "").strip() or None,
-            register_date=request.args.get("register_date", "").strip() or None,
-            transaction_query=request.args.get("transaction_query", "").strip() or None,
-            transaction_date=request.args.get("transaction_date", "").strip() or None,
-        ))
+        return jsonify(
+            inventory_summary(
+                product_page=product_page,
+                transaction_page=transaction_page,
+                page_size=20,
+                product_query=request.args.get("product_query", "").strip() or None,
+                product_width=request.args.get("product_width", "").strip() or None,
+                product_status=request.args.get("product_status", "").strip() or None,
+                checkout_date=request.args.get("checkout_date", "").strip() or None,
+                register_date=request.args.get("register_date", "").strip() or None,
+                transaction_query=request.args.get("transaction_query", "").strip() or None,
+                transaction_date=request.args.get("transaction_date", "").strip() or None,
+            )
+        )
     except ValueError:
         return jsonify(error="Inventory pages must be whole numbers and dates must be valid."), 400
+
 
 @web.post("/api/inventory/products")
 def create_inventory_product():
@@ -303,38 +436,70 @@ def create_inventory_product():
         products = register_product(request.get_json() or {})
         first = products[0]
         message = (
-            f'{len(products)} small rolls registered and QR labels created.'
-            if len(products) > 1 else "Roll registered and QR label created."
+            f"{len(products)} small rolls registered and QR labels created."
+            if len(products) > 1
+            else "Roll registered and QR label created."
         )
-        return jsonify(id=first["id"], qr_token=first["qr_token"], ids=[p["id"] for p in products], products=products, message=message), 201
+        return (
+            jsonify(
+                id=first["id"],
+                qr_token=first["qr_token"],
+                ids=[p["id"] for p in products],
+                products=products,
+                message=message,
+            ),
+            201,
+        )
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.post("/api/inventory/products/<int:product_id>/small-rolls")
 def create_inventory_small_roll(product_id):
     try:
         product = register_small_roll(product_id, request.get_json() or {})
-        return jsonify(id=product["id"], qr_token=product["qr_token"], message="Small roll registered and QR label created."), 201
+        return (
+            jsonify(
+                id=product["id"],
+                qr_token=product["qr_token"],
+                message="Small roll registered and QR label created.",
+            ),
+            201,
+        )
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.get("/api/inventory/products/<int:product_id>/qr.png")
 def inventory_product_qr(product_id):
     with_url = current_app.config["QR_PUBLIC_BASE_URL"] or request.url_root.rstrip("/")
     from .db import transaction
+
     with transaction() as cursor:
-        cursor.execute("SELECT qr_token, roll_number FROM system_import.inventory_products WHERE id=%s", (product_id,))
+        cursor.execute(
+            "SELECT qr_token, roll_number FROM system_import.inventory_products WHERE id=%s",
+            (product_id,),
+        )
         product = cursor.fetchone()
     if not product:
         return jsonify(error="Product not found."), 404
     try:
-        return send_file(make_qr_png(f'{with_url}/inventory/scan/{product["qr_token"]}'), mimetype="image/png", download_name=f'{product["roll_number"]}-QR.png')
+        scan_url = (
+            f'{with_url}/inventory/scan/{product["qr_token"]}?department={current_department()}'
+        )
+        return send_file(
+            make_qr_png(scan_url),
+            mimetype="image/png",
+            download_name=f'{product["roll_number"]}-QR.png',
+        )
     except RuntimeError as exc:
         return jsonify(error=str(exc)), 503
+
 
 @web.get("/inventory/products/<int:product_id>/label")
 def inventory_product_label(product_id):
     from .db import transaction
+
     with transaction() as cursor:
         cursor.execute(
             """SELECT id, roll_number, product_code, material_code, parent_roll_number,
@@ -348,6 +513,7 @@ def inventory_product_label(product_id):
         return "Product not found.", 404
     return render_template("inventory_label.html", product=product)
 
+
 @web.get("/inventory/products/labels")
 def inventory_product_labels():
     raw_ids = [value.strip() for value in request.args.get("ids", "").split(",") if value.strip()]
@@ -358,6 +524,7 @@ def inventory_product_labels():
     if not product_ids or len(product_ids) > 100:
         return "Select between 1 and 100 products.", 400
     from .db import transaction
+
     placeholders = ",".join(["%s"] * len(product_ids))
     with transaction() as cursor:
         cursor.execute(
@@ -373,13 +540,19 @@ def inventory_product_labels():
         return "No selected products were found.", 404
     return render_template("inventory_labels.html", products=products)
 
+
 @web.post("/api/inventory/scan/<token>")
 def scan_inventory_product(token):
     try:
         product = check_out_product(token, (request.get_json() or {}).get("scanned_by"))
-        return jsonify(ok=True, product=product, message=f'Roll {product["roll_number"]} checked out. Inventory reduced by 1.')
+        return jsonify(
+            ok=True,
+            product=product,
+            message=f'Roll {product["roll_number"]} checked out. Inventory reduced by 1.',
+        )
     except ValueError as exc:
         return jsonify(error=str(exc)), 409
+
 
 @web.post("/api/inventory/decode-qr")
 def decode_inventory_qr():
@@ -389,89 +562,124 @@ def decode_inventory_qr():
     try:
         from PIL import Image
         import zxingcpp
+
         image = Image.open(io.BytesIO(upload.read()))
         barcode = zxingcpp.read_barcode(image)
         if not barcode or not barcode.text:
             raise ValueError("No QR code was found. Move closer and try again.")
         from urllib.parse import urlparse
+
         parsed = urlparse(barcode.text)
         prefix = "/inventory/scan/"
         if not parsed.path.startswith(prefix):
             raise ValueError("This is not a GNEM roll inventory QR code.")
-        token = parsed.path[len(prefix):].strip("/")
+        token = parsed.path[len(prefix) :].strip("/")
         get_product_by_token(token)
-        return jsonify(ok=True, scan_path=f"{prefix}{token}")
+        return jsonify(ok=True, scan_path=f"{prefix}{token}?department={current_department()}")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     except Exception:
         return jsonify(error="The QR picture could not be read. Retake it in good light."), 400
 
-@web.get('/api/departments')
-def departments():
-    return jsonify(departments=DEPARTMENTS, selected=current_department())
 
-@web.post('/api/manager/department')
+@web.get("/api/departments")
+def departments():
+    return jsonify(departments=MAIN_PAGE_DEPARTMENTS, selected=current_department())
+
+
+@web.post("/api/manager/department")
 @require_manager
 def manager_department():
-    value = (request.get_json() or {}).get('department')
-    if value not in DEPARTMENTS:
-        return jsonify(error='Unknown department.'), 400
-    return jsonify(department=value, url='/?department=' + value)
+    value = (request.get_json() or {}).get("department")
+    if value not in MAIN_PAGE_DEPARTMENTS:
+        return jsonify(error="Only Slurry and Slitting have main application pages."), 400
+    return jsonify(department=value, url="/?department=" + value)
 
-@web.get('/api/slitting/summary')
+
+@web.get("/api/slitting/summary")
 def slitting_production_summary():
-    if current_department() != 'slitting':
-        return jsonify(error='Select Slitting first.'), 400
+    if not uses_slitting_workflow():
+        return jsonify(error="Select Slitting or Coating first."), 400
     try:
         summary = slitting_summary(
-            request.args.get('date') or None,
-            request.args.get('machine') or None,
-            request.args.get('width') or None,
+            request.args.get("date") or None,
+            request.args.get("machine") or None,
+            request.args.get("width") or None,
         )
-        summary['display_settings'] = get_display_settings()
-        summary['daily_task'] = get_daily_task(
-            request.args.get('date') or None,
-            request.args.get('shift') or None,
+        summary["display_settings"] = get_display_settings()
+        summary["daily_task"] = get_daily_task(
+            request.args.get("date") or None,
+            request.args.get("shift") or None,
         )
-        summary['standard_fields'] = get_standard_field_settings('production')
+        summary["standard_fields"] = get_standard_field_settings("production")
         return jsonify(summary)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
-@web.get('/api/slitting/options')
-def slitting_options():
-    production_machines=machine_choices('production');abnormality_machines=machine_choices('abnormality')
-    return jsonify(categories=event_categories(), machines=[choice['value'] for choice in production_machines],
-                   machine_options=production_machines, abnormality_machine_options=abnormality_machines,
-                   production_shift_options=shift_choices('production'), abnormality_shift_options=shift_choices('abnormality'),
-                   models=[row['model_code'] for row in model_specs()])
 
-@web.post('/api/manager/slitting-event-categories')
+@web.get("/api/slitting/options")
+def slitting_options():
+    production_machines = machine_choices("production")
+    abnormality_machines = machine_choices("abnormality")
+    return jsonify(
+        categories=event_categories(),
+        machines=[choice["value"] for choice in production_machines],
+        machine_options=production_machines,
+        abnormality_machine_options=abnormality_machines,
+        production_shift_options=shift_choices("production"),
+        abnormality_shift_options=shift_choices("abnormality"),
+        models=[row["model_code"] for row in model_specs()],
+    )
+
+
+@web.post("/api/manager/slitting-event-categories")
 @require_manager
 def save_slitting_event_category():
+    if not uses_slitting_workflow():
+        return jsonify(error="Slitting category settings are available only for roll departments."), 400
     try:
-        saved = save_event_category(request.get_json() or {}, session.get('manager_id'))
-        return jsonify(message='Slitting main category and subcategory saved.', category=saved), 201
+        saved = save_event_category(request.get_json() or {}, session.get("manager_id"))
+        return jsonify(message="Slitting main category and subcategory saved.", category=saved), 201
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
-@web.get('/api/manager/slitting-models')
+
+@web.post("/api/manager/slitting-event-categories/deactivate")
+@require_manager
+def deactivate_slitting_event_category():
+    if not uses_slitting_workflow():
+        return jsonify(error="Slitting category settings are available only for roll departments."), 400
+    try:
+        result = deactivate_event_category(request.get_json() or {}, session.get("manager_id"))
+        if result["scope"] == "main_category":
+            message = "Slitting main category and all corresponding subcategories deactivated."
+        else:
+            message = "Slitting subcategory deactivated; its main category remains active."
+        return jsonify(message=message, category=result)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@web.get("/api/manager/slitting-models")
 @require_manager
 def slitting_models():
     return jsonify(models=model_specs(False))
 
-@web.post('/api/manager/slitting-models')
+
+@web.post("/api/manager/slitting-models")
 @require_manager
 def save_slitting_model():
     try:
-        save_model_spec(request.get_json() or {}, session.get('manager_id'))
-        return jsonify(message='Slitting model lookup saved.')
+        save_model_spec(request.get_json() or {}, session.get("manager_id"))
+        return jsonify(message="Slitting model lookup saved.")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.get("/api/csrf")
 def csrf_token():
     return jsonify(token=session["csrf_token"])
+
 
 @web.post("/api/manager/login")
 def manager_login():
@@ -496,10 +704,12 @@ def manager_login():
     session.permanent = True
     return jsonify(ok=True, csrf_token=session["csrf_token"])
 
+
 @web.post("/api/manager/logout")
 def manager_logout():
     session.clear()
     return jsonify(ok=True)
+
 
 @web.post("/api/production-records")
 def production():
@@ -509,6 +719,7 @@ def production():
     except (KeyError, ValueError) as exc:
         return jsonify(error=str(exc)), 400
 
+
 @web.patch("/api/production-records/<int:record_id>/qualification")
 def production_qualification(record_id):
     try:
@@ -516,6 +727,7 @@ def production_qualification(record_id):
         return jsonify(ok=True, message="Qualified quantity updated.")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.post("/api/abnormality-reports")
 def abnormality():
@@ -549,11 +761,21 @@ def abnormality_record_update(report_id):
     except (TypeError, ValueError) as exc:
         return jsonify(error=str(exc)), 400
 
+
 @web.post("/api/sync")
 def sync_offline_queue():
     records = (request.get_json() or {}).get("records", [])
-    if not isinstance(records, list) or not records or len(records) > current_app.config["SYNC_BATCH_LIMIT"]:
-        return jsonify(error=f"Send between 1 and {current_app.config['SYNC_BATCH_LIMIT']} records per sync."), 400
+    if (
+        not isinstance(records, list)
+        or not records
+        or len(records) > current_app.config["SYNC_BATCH_LIMIT"]
+    ):
+        return (
+            jsonify(
+                error=f"Send between 1 and {current_app.config['SYNC_BATCH_LIMIT']} records per sync."
+            ),
+            400,
+        )
     outcomes = []
     for item in records:
         try:
@@ -583,6 +805,7 @@ def sync_offline_queue():
             )
     return jsonify(outcomes=outcomes)
 
+
 @web.get("/api/records/<record_type>")
 def records(record_type):
     if record_type not in {"production", "abnormality", "tracker", "ongoing", "analysis"}:
@@ -608,6 +831,7 @@ def records(record_type):
     )
     return jsonify(records=rows, page=page, page_size=page_size, total=total)
 
+
 @web.get("/api/forms/<form_key>")
 def form_definition(form_key):
     if form_key not in {"production", "abnormality"}:
@@ -621,6 +845,7 @@ def standard_form_definition(form_key):
         return jsonify(fields=get_standard_field_settings(form_key))
     except ValueError as exc:
         return jsonify(error=str(exc)), 404
+
 
 @web.get("/api/manager/forms/<form_key>/fields")
 def manager_form_definitions(form_key):
@@ -636,13 +861,16 @@ def manager_standard_form_fields(form_key):
     except ValueError as exc:
         return jsonify(error=str(exc)), 404
 
+
 @web.get("/api/cost-failure-types")
 def cost_failure_types():
     return jsonify(types=get_cost_failure_types())
 
+
 @web.get("/api/event-types")
 def event_types():
     return jsonify(types=get_event_types())
+
 
 @web.get("/api/daily-report")
 def report_for_date():
@@ -651,25 +879,34 @@ def report_for_date():
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
+
 @web.get("/api/public-display")
 def public_display_data():
     try:
-        return jsonify(public_display_summary(
-            request.args.get("date") or None,
-            request.args.get("shift") or None,
-        ))
+        return jsonify(
+            public_display_summary(
+                request.args.get("date") or None,
+                request.args.get("shift") or None,
+            )
+        )
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
+
 @web.get("/api/manager/display-settings")
 @require_manager
-def manager_display_settings(): return jsonify(settings=get_display_settings())
+def manager_display_settings():
+    return jsonify(settings=get_display_settings())
+
 
 @web.post("/api/manager/display-settings")
 @require_manager
 def update_manager_display_settings():
-    try: return jsonify(ok=True, settings=save_display_settings(request.get_json() or {}))
-    except ValueError as exc: return jsonify(error=str(exc)), 400
+    try:
+        return jsonify(ok=True, settings=save_display_settings(request.get_json() or {}))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
 
 @web.post("/api/daily-task")
 def save_operator_daily_task():
@@ -683,12 +920,15 @@ def save_operator_daily_task():
 @web.get("/api/daily-task")
 def operator_daily_task():
     try:
-        return jsonify(task=get_daily_task(
-            request.args.get("date") or None,
-            request.args.get("shift") or None,
-        ))
+        return jsonify(
+            task=get_daily_task(
+                request.args.get("date") or None,
+                request.args.get("shift") or None,
+            )
+        )
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.post("/api/manager/cost-failure-types")
 @require_manager
@@ -699,6 +939,7 @@ def save_cost_type():
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
+
 @web.delete("/api/manager/cost-failure-types/<type_code>")
 @require_manager
 def remove_cost_type(type_code):
@@ -707,6 +948,7 @@ def remove_cost_type(type_code):
         return jsonify(ok=True, message="Cost-failure type deactivated.")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.post("/api/manager/event-types")
 @require_manager
@@ -717,6 +959,7 @@ def save_event_type_option():
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
+
 @web.delete("/api/manager/event-types/<path:event_value>")
 @require_manager
 def remove_event_type(event_value):
@@ -725,6 +968,7 @@ def remove_event_type(event_value):
         return jsonify(ok=True, message="Event type deactivated.")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.post("/api/manager/forms/<form_key>/fields")
 @require_manager
@@ -741,9 +985,13 @@ def configure_field(form_key):
 def configure_standard_field(form_key):
     try:
         save_standard_field_setting(form_key, request.get_json() or {})
-        return jsonify(ok=True, message="Standard field setting saved to system_import.standard_field_settings.")
+        return jsonify(
+            ok=True,
+            message="Standard field setting saved to system_import.standard_field_settings.",
+        )
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.get("/api/manager/dashboard")
 @require_manager
@@ -774,14 +1022,21 @@ def manager_record(record_type, record_id):
 @require_manager
 def manager_record_update(record_type, record_id):
     try:
-        return jsonify(ok=True, record=manager_update_record(record_type, record_id, request.get_json() or {}))
+        return jsonify(
+            ok=True, record=manager_update_record(record_type, record_id, request.get_json() or {})
+        )
     except (TypeError, ValueError) as exc:
         return jsonify(error=str(exc)), 400
+
 
 @web.patch("/api/abnormality-reports/<int:report_id>/tracker")
 def tracker_update(report_id):
     try:
-        result = update_tracker(report_id, request.get_json() or {}, manager=session.get("manager_access", False))
-        return jsonify(ok=True, message="Event closed." if result["closed"] else "Tracker updated.", **result)
+        result = update_tracker(
+            report_id, request.get_json() or {}, manager=session.get("manager_access", False)
+        )
+        return jsonify(
+            ok=True, message="Event closed." if result["closed"] else "Tracker updated.", **result
+        )
     except ValueError as exc:
         return jsonify(error=str(exc)), 400

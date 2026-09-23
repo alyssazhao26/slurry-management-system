@@ -1,13 +1,13 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roll inventory scan</title><link rel="stylesheet" href="/static/style.css"></head>
-<body class="scan-page"><main class="scan-shell">
-  {% if product %}
-  <section class="scan-card"><span class="eyebrow">SLITTING INVENTORY / 分切库存</span><h1>{{ product.roll_number }}</h1><p>{{ product.product_code }} · {{ product.slit_width_mm }} mm</p>
-    <div id="scan-result" class="scan-result">Processing inventory transaction… / 正在处理库存交易…</div>
-    <label id="scan-more-product" class="primary scan-more" for="camera-capture" hidden>Scan more product / 继续扫描产品</label>
-    <input id="camera-capture" class="camera-capture-input" type="file" accept="image/*" capture="environment">
-    <p class="scan-close-help">Use “Scan more product” to keep scanning in this same tab. / 点击“继续扫描产品”，即可在当前页面继续扫码。</p>
-  </section>
-  <script src="/static/inventory-scan.js" defer></script>
-  {% else %}<section class="scan-card"><h1>Unknown QR code / 无效二维码</h1><p>This roll is not registered in the system.</p><a href="/">Return to system</a></section>{% endif %}
-</main></body></html>
+  <body class="scan-page"><main class="scan-shell">
+    {% if product %}
+      <section class="scan-card"><span class="eyebrow">{{ 'COATING INVENTORY / 涂布库存' if department == 'coating' else 'SLITTING INVENTORY / 分切库存' }}</span><h1>{{ product.roll_number }}</h1><p>{{ product.product_code }} · {{ product.slit_width_mm }} mm</p>
+        <div id="scan-result" class="scan-result">Processing inventory transaction… / 正在处理库存交易…</div>
+        <label id="scan-more-product" class="primary scan-more" for="camera-capture" hidden>Scan more product / 继续扫描产品</label>
+        <input id="camera-capture" class="camera-capture-input" type="file" accept="image/*" capture="environment">
+        <p class="scan-close-help">Use “Scan more product” to keep scanning in this same tab. / 点击“继续扫描产品”，即可在当前页面继续扫码。</p>
+      </section>
+      <script src="/static/inventory-scan.js" defer></script>
+    {% else %}<section class="scan-card"><h1>Unknown QR code / 无效二维码</h1><p>This roll is not registered in the system.</p><a href="/">Return to system</a></section>{% endif %}
+  </main></body></html>

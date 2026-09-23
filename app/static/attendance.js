@@ -10,7 +10,9 @@ let signOutTimer = null;
 let employeeRecords = [];
 
 async function refreshCsrf() {
-  const response = await fetch("/api/csrf", { cache: "no-store" });
+  const response = await fetch("/api/csrf", {
+    cache: "no-store"
+  });
   csrf = (await response.json()).token;
 }
 
@@ -39,12 +41,16 @@ function table(headers, rows) {
   return `<div class="table"><table><thead><tr>${heading}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
 }
 
-const halfHours = (start, end) => Array.from(
-  { length: Math.round((end - start) * 2) + 1 },
+const halfHours = (start, end) => Array.from({
+    length: Math.round((end - start) * 2) + 1
+  },
   (_, index) => (start + index * 0.5).toFixed(1),
 );
 
-function fillSelect(select, values, { blank = false, custom = false } = {}) {
+function fillSelect(select, values, {
+  blank = false,
+  custom = false
+} = {}) {
   const blankOption = blank ? '<option value="">None / 无</option>' : "";
   const choices = values.map((value) => `<option value="${value}">${value}</option>`).join("");
   const customOption = custom ? '<option value="custom">Custom / 自定义</option>' : "";
@@ -55,15 +61,19 @@ fillSelect($("#attendance-form [name='paid_break_hours']"), halfHours(0, 2));
 fillSelect($("#attendance-form [name='total_hours']"), halfHours(3, 12));
 fillSelect(
   $("#attendance-form [name='overtime_hours']"),
-  halfHours(0.5, 3),
-  { blank: true, custom: true },
+  halfHours(0.5, 3), {
+    blank: true,
+    custom: true
+  },
 );
 
 function armSignOut(expiresAt) {
   clearTimeout(signOutTimer);
   const delay = Math.max(0, Number(expiresAt) * 1000 - Date.now());
   signOutTimer = setTimeout(async () => {
-    await api("/api/attendance/logout", { method: "POST" });
+    await api("/api/attendance/logout", {
+      method: "POST"
+    });
     location.reload();
   }, delay);
 }
@@ -73,7 +83,8 @@ function showEmployee(data) {
   const mustReset = Boolean(Number(data.employee.pin_reset_required));
   $("#employee-login").hidden = true;
   $("#employee-panel").hidden = false;
-  $("#employee-name").textContent = `${data.employee.employee_name} (${data.employee.staffing_company})`;
+  $("#employee-name").textContent =
+    `${data.employee.employee_name} (${data.employee.staffing_company})`;
   $("#first-login-pin-form").hidden = !mustReset;
   $("#attendance-entry").hidden = mustReset;
 
@@ -88,7 +99,9 @@ function showEmployee(data) {
     </tr>
   `);
   $("#employee-history").innerHTML = table(
-    ["Date / 日期", "Login timestamp / 登录时间", "Paid break / 带薪休息", "Total hours / 总工时", "Overtime / 加班"],
+    ["Date / 日期", "Login timestamp / 登录时间", "Paid break / 带薪休息", "Total hours / 总工时",
+      "Overtime / 加班"
+    ],
     rows,
   );
   armSignOut(data.expires_at);
@@ -96,7 +109,9 @@ function showEmployee(data) {
 
 async function reloadEmployee() {
   const response = await fetch("/api/attendance/me", {
-    headers: { "X-Department": "slurry" },
+    headers: {
+      "X-Department": "slurry"
+    },
   });
   if (response.ok) showEmployee(await response.json());
 }
@@ -105,7 +120,9 @@ $("#employee-login-form").onsubmit = async (event) => {
   event.preventDefault();
   const response = await api("/api/attendance/login", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json"
+    },
     body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))),
   });
   const data = await response.json();
@@ -130,7 +147,9 @@ $("#attendance-form").onsubmit = async (event) => {
 
   const response = await api("/api/attendance/records", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json"
+    },
     body: JSON.stringify(payload),
   });
   const data = await response.json();
@@ -149,7 +168,9 @@ $("#first-login-pin-form").onsubmit = async (event) => {
 
   const response = await api("/api/attendance/reset-pin", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json"
+    },
     body: JSON.stringify(payload),
   });
   const data = await response.json();
@@ -157,12 +178,17 @@ $("#first-login-pin-form").onsubmit = async (event) => {
   if (response.status === 401) return location.reload();
   if (response.ok) {
     event.currentTarget.reset();
-    showEmployee({...data, records: employeeRecords});
+    showEmployee({
+      ...data,
+      records: employeeRecords
+    });
   }
 };
 
 $("#employee-logout").onclick = async () => {
-  await api("/api/attendance/logout", { method: "POST" });
+  await api("/api/attendance/logout", {
+    method: "POST"
+  });
   location.reload();
 };
 

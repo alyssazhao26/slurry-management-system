@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ product.roll_number }} QR label</title><link rel="stylesheet" href="/static/style.css"></head>
-<body class="label-page"><main class="label-shell">
-  <section class="roll-label">
-    <h1>{{ product.roll_number }}</h1>
-    <img src="/api/inventory/products/{{ product.id }}/qr.png" alt="QR code for {{ product.roll_number }}">
-    <p class="label-spec">{{ product.slit_width_mm or '—' }} mm × {{ product.roll_length_m or '—' }} m × {{ product.thickness_um or '—' }} μm</p>
-  </section>
-  <div class="label-actions"><button id="print-label" class="primary">Print / Save as PDF · 打印/另存为PDF</button><button id="close-label" class="secondary">Close / 关闭</button></div>
-</main><script src="/static/inventory-label.js" defer></script></body></html>
+  <body class="label-page"><main class="label-shell">
+    <section class="roll-label">
+      <h1>{{ product.roll_number }}</h1>
+      <img src="/api/inventory/products/{{ product.id }}/qr.png?department={{ department }}" alt="QR code for {{ product.roll_number }}">
+      <p class="label-spec">{{ product.slit_width_mm or '—' }} mm × {{ product.roll_length_m or '—' }} m × {{ product.thickness_um or '—' }} μm</p>
+    </section>
+    <div class="label-actions"><button id="print-label" class="primary">Print / Save as PDF · 打印/另存为PDF</button><button id="close-label" class="secondary">Close / 关闭</button></div>
+  </main><script src="/static/inventory-label.js" defer></script></body></html>

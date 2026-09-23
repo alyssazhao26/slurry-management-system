@@ -30,7 +30,10 @@ def test_production_http_attendance_cookie_is_not_secure(monkeypatch):
     monkeypatch.setattr(Config, "BEHIND_TLS_PROXY", True)
     app = create_app(display_only=True)
     client = app.test_client()
-    options = {"base_url": "http://192.168.1.10:5000", "environ_base": {"REMOTE_ADDR": "192.168.1.20"}}
+    options = {
+        "base_url": "http://192.168.1.10:5000",
+        "environ_base": {"REMOTE_ADDR": "192.168.1.20"},
+    }
     response = client.get("/api/csrf", **options)
     assert response.status_code == 200
     assert "Secure" not in response.headers["Set-Cookie"]
@@ -69,7 +72,9 @@ def test_normal_https_application_still_accepts_remote_users(monkeypatch):
 
     assert response.status_code == 200
     assert client.get("/attendance", base_url="https://slurry-management.local").status_code == 200
-    assert client.get("/attendance/qr", base_url="https://slurry-management.local").status_code == 403
+    assert (
+        client.get("/attendance/qr", base_url="https://slurry-management.local").status_code == 403
+    )
     with client.session_transaction(base_url="https://slurry-management.local") as session:
         session["manager_access"] = True
     qr = client.get("/attendance/qr", base_url="https://slurry-management.local")

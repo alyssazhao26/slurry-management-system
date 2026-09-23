@@ -9,7 +9,6 @@ from ..departments import current_department
 from subprocess import CalledProcessError, TimeoutExpired, run
 from threading import Lock
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BACKUP_SCRIPT = PROJECT_ROOT / "scripts" / "backup_factory_database.ps1"
 BACKUP_TIMEOUT_SECONDS = 300
@@ -34,7 +33,8 @@ def run_manual_backup() -> str:
                     "Bypass",
                     "-File",
                     str(BACKUP_SCRIPT),
-                    "-Department", current_department(),
+                    "-Department",
+                    current_department(),
                 ],
                 cwd=PROJECT_ROOT,
                 capture_output=True,
@@ -43,10 +43,14 @@ def run_manual_backup() -> str:
                 check=True,
             )
         except TimeoutExpired as exc:
-            raise RuntimeError("Backup did not finish within five minutes. Check the server.") from exc
+            raise RuntimeError(
+                "Backup did not finish within five minutes. Check the server."
+            ) from exc
         except CalledProcessError as exc:
             # Do not return raw PowerShell output: it can reveal server paths or settings.
-            raise RuntimeError("Backup failed. Check the server backup log or configuration.") from exc
+            raise RuntimeError(
+                "Backup failed. Check the server backup log or configuration."
+            ) from exc
     finally:
         BACKUP_LOCK.release()
 

@@ -1,4 +1,5 @@
 """Fast, database-free release gate used before a staging or production deployment."""
+
 from __future__ import annotations
 
 import ast
@@ -7,9 +8,14 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = (
-    "README.md", "requirements.txt", "main.py", ".env.example",
-    "documentation/01_deployment.html", "documentation/07_release_pipeline.html",
-    "documentation/index.html", "documentation/assets/docs.css",
+    "README.md",
+    "requirements.txt",
+    "main.py",
+    ".env.example",
+    "documentation/01_deployment.html",
+    "documentation/07_release_pipeline.html",
+    "documentation/index.html",
+    "documentation/assets/docs.css",
     "deployment/environments/.env.development.example",
     "deployment/environments/.env.test.example",
     "deployment/environments/.env.production.example",

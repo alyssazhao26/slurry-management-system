@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from flask import current_app
 
 from ..db import transaction
-from ..departments import current_department
+from ..departments import current_department, uses_slitting_workflow
 from . import slitting
 from .analysis import Analysis, analyse_abnormality, analyse_production
 
@@ -26,6 +26,7 @@ def _json_safe_rows(rows):
                 row[key] = value.isoformat()
     return rows
 
+
 def _audit(cursor, actor_id, entity_type, entity_id, action, details):
     cursor.execute(
         """
@@ -34,6 +35,23 @@ def _audit(cursor, actor_id, entity_type, entity_id, action, details):
         """,
         (actor_id, entity_type, entity_id, action, json.dumps(details)),
     )
+
+
+def _validate_active_event_type(cursor, payload):
+    if uses_slitting_workflow():
+        cursor.execute(
+            """SELECT 1 FROM system_import.slitting_event_categories
+            WHERE main_category=%s AND subcategory=%s AND is_active=TRUE LIMIT 1""",
+            (payload.get("event_type"), payload.get("subcategory")),
+        )
+        if not cursor.fetchone():
+            raise ValueError("An invalid or inactive Slitting main/subcategory was supplied.")
+        return
+    cursor.execute(
+        "SELECT event_value FROM system_import.event_type_options WHERE is_active = TRUE"
+    )
+    if payload.get("event_type") not in {row["event_value"] for row in cursor.fetchall()}:
+        raise ValueError("An invalid or inactive event type was supplied.")
 
 
 def _sync_identity(payload, source_type):
@@ -65,7 +83,7 @@ def _existing_sync(cursor, source_type, client_record_id, payload_hash):
 
 
 def create_production(payload, actor_id=None):
-    if current_department() == "slitting":
+    if uses_slitting_workflow():
         payload = slitting.normalise_production(payload)
     payload = {**payload, "record_date": date.today().isoformat()}
     planned, actual = (float(payload[key]) for key in ("planned_quantity", "actual_quantity"))
@@ -80,7 +98,12 @@ def create_production(payload, actor_id=None):
     analysis = (
         analyse_production(planned, actual, qualified, current_app.config["LOW_YIELD_THRESHOLD"])
         if qualified is not None
-        else Analysis("normal", "normal", "Qualified quantity is pending follow-up.", {"qualified_pending": True})
+        else Analysis(
+            "normal",
+            "normal",
+            "Qualified quantity is pending follow-up.",
+            {"qualified_pending": True},
+        )
     )
     achievement_rate = actual / planned if planned > 0 else None
     qualified_rate = qualified / actual if qualified is not None and actual > 0 else None
@@ -100,12 +123,19 @@ def create_production(payload, actor_id=None):
             FROM system_import.production_records
             WHERE record_date = %s AND shift_name = %s AND machine_code = %s AND batch_number = %s
             """,
-            (payload["record_date"], payload["shift_name"], payload["machine_code"], payload["batch_number"]),
+            (
+                payload["record_date"],
+                payload["shift_name"],
+                payload["machine_code"],
+                payload["batch_number"],
+            ),
         )
         existing = cursor.fetchone()
         if existing:
-            if current_department() == "slitting":
-                raise ValueError("This machine, shift and run ID already exist. Use the qualified-roll follow-up or manager edit.")
+            if uses_slitting_workflow():
+                raise ValueError(
+                    "This machine, shift and run ID already exist. Use the qualified-roll follow-up or manager edit."
+                )
             if existing["qualified_pending"] and qualified is not None:
                 existing_actual = float(existing["actual_quantity"])
                 if qualified > existing_actual:
@@ -117,9 +147,20 @@ def create_production(payload, actor_id=None):
                         qualified_rate = %s, row_version = row_version + 1
                     WHERE id = %s
                     """,
-                    (qualified, qualified / existing_actual if existing_actual > 0 else None, existing["id"]),
+                    (
+                        qualified,
+                        qualified / existing_actual if existing_actual > 0 else None,
+                        existing["id"],
+                    ),
                 )
-                _audit(cursor, actor_id, "production_record", existing["id"], "qualified_quantity_follow_up", {"qualified_quantity": qualified})
+                _audit(
+                    cursor,
+                    actor_id,
+                    "production_record",
+                    existing["id"],
+                    "qualified_quantity_follow_up",
+                    {"qualified_quantity": qualified},
+                )
                 return existing["id"], analysis
             raise ValueError(
                 "This date, shift, machine, and batch already have a production record. "
@@ -135,9 +176,19 @@ def create_production(payload, actor_id=None):
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                payload["record_date"], payload["shift_name"], payload["machine_code"],
-                formula_code, payload["batch_number"], planned, actual,
-                qualified, qualified_pending, payload.get("notes", ""), achievement_rate, qualified_rate, actor_id,
+                payload["record_date"],
+                payload["shift_name"],
+                payload["machine_code"],
+                formula_code,
+                payload["batch_number"],
+                planned,
+                actual,
+                qualified,
+                qualified_pending,
+                payload.get("notes", ""),
+                achievement_rate,
+                qualified_rate,
+                actor_id,
                 json.dumps(payload.get("custom_fields", {})),
             ),
         )
@@ -164,17 +215,34 @@ def create_production(payload, actor_id=None):
 
 
 def update_production_qualification(record_id, payload, actor_id=None):
-    if current_department() == "slitting":
-        existing = manager_get_record('production', record_id)
+    if uses_slitting_workflow():
+        existing = manager_get_record("production", record_id)
         # The operator enters output rolls; the stored qualified quantity is area.
-        converted = slitting.normalise_production({'qualified_rolls':payload.get('qualified_quantity')}, existing)
+        converted = slitting.normalise_production(
+            {"qualified_rolls": payload.get("qualified_quantity")}, existing
+        )
         with transaction() as cursor:
-            qualified = converted['qualified_quantity']
-            if qualified == '': raise ValueError('Enter qualified output rolls.')
-            actual = float(existing['actual_quantity'])
-            cursor.execute('UPDATE system_import.production_records SET qualified_quantity=%s, qualified_pending=FALSE, qualified_rate=%s, custom_fields=%s, row_version=row_version+1 WHERE id=%s',
-                (qualified, qualified/actual if actual else None, json.dumps(converted['custom_fields']),record_id))
-            _audit(cursor,actor_id,'production_record',record_id,'qualified_rolls_follow_up',converted)
+            qualified = converted["qualified_quantity"]
+            if qualified == "":
+                raise ValueError("Enter qualified output rolls.")
+            actual = float(existing["actual_quantity"])
+            cursor.execute(
+                "UPDATE system_import.production_records SET qualified_quantity=%s, qualified_pending=FALSE, qualified_rate=%s, custom_fields=%s, row_version=row_version+1 WHERE id=%s",
+                (
+                    qualified,
+                    qualified / actual if actual else None,
+                    json.dumps(converted["custom_fields"]),
+                    record_id,
+                ),
+            )
+            _audit(
+                cursor,
+                actor_id,
+                "production_record",
+                record_id,
+                "qualified_rolls_follow_up",
+                converted,
+            )
         return record_id
     try:
         qualified = float(payload["qualified_quantity"])
@@ -194,7 +262,9 @@ def update_production_qualification(record_id, payload, actor_id=None):
         planned = float(row["planned_quantity"])
         if qualified > actual:
             raise ValueError("Qualified quantity cannot exceed actual quantity.")
-        analysis = analyse_production(planned, actual, qualified, current_app.config["LOW_YIELD_THRESHOLD"])
+        analysis = analyse_production(
+            planned, actual, qualified, current_app.config["LOW_YIELD_THRESHOLD"]
+        )
         cursor.execute(
             """
             UPDATE system_import.production_records
@@ -204,7 +274,14 @@ def update_production_qualification(record_id, payload, actor_id=None):
             """,
             (qualified, qualified / actual if actual > 0 else None, record_id),
         )
-        _audit(cursor, actor_id, "production_record", record_id, "qualified_quantity_follow_up", {"qualified_quantity": qualified})
+        _audit(
+            cursor,
+            actor_id,
+            "production_record",
+            record_id,
+            "qualified_quantity_follow_up",
+            {"qualified_quantity": qualified},
+        )
         if analysis.status == "open":
             cursor.execute(
                 """
@@ -217,7 +294,7 @@ def update_production_qualification(record_id, payload, actor_id=None):
 
 
 def create_abnormality(payload, actor_id=None):
-    if current_department() == "slitting":
+    if uses_slitting_workflow():
         payload = slitting.normalise_abnormality(payload)
     payload = {**payload, "event_date": date.today().isoformat()}
     description = str(payload.get("description", "")).strip()
@@ -226,7 +303,9 @@ def create_abnormality(payload, actor_id=None):
         raise ValueError("Describe what happened.")
     payload["description"], payload["immediate_action"] = description, immediate_action
     time_pattern = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-    if not time_pattern.fullmatch(str(payload.get("start_time", ""))) or not time_pattern.fullmatch(str(payload.get("end_time", ""))):
+    if not time_pattern.fullmatch(str(payload.get("start_time", ""))) or not time_pattern.fullmatch(
+        str(payload.get("end_time", ""))
+    ):
         raise ValueError("Event time must use valid 24-hour values (HH:MM - HH:MM).")
     duration = int(payload["duration_minutes"])
     cost_failure_types = payload.get("cost_failure_types", [])
@@ -261,14 +340,7 @@ def create_abnormality(payload, actor_id=None):
 
     client_record_id, payload_hash = _sync_identity(payload, "abnormality")
     with transaction() as cursor:
-        cursor.execute(
-            "SELECT event_value FROM system_import.event_type_options WHERE is_active = TRUE"
-        )
-        active_event_types = {row["event_value"] for row in cursor.fetchall()}
-        if current_department() == "slitting":
-            active_event_types = set(slitting.CATEGORIES)
-        if payload["event_type"] not in active_event_types:
-            raise ValueError("An invalid or inactive event type was supplied.")
+        _validate_active_event_type(cursor, payload)
         cursor.execute(
             "SELECT type_code FROM system_import.cost_failure_types WHERE is_active = TRUE"
         )
@@ -288,12 +360,25 @@ def create_abnormality(payload, actor_id=None):
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                payload["event_date"], payload.get("start_time") or None, payload.get("end_time") or None,
-                payload["shift_name"], payload["machine_code"], machine_type, payload["event_type"],
-                payload["severity"], duration,
-                payload.get("description", ""), payload.get("immediate_action", ""),
-                actor_id, json.dumps(payload.get("custom_fields", {})), workflow_state, is_resolved,
-                effective_time_cost, json.dumps(cost_failure_types), responsible_person or None, target_finish_date,
+                payload["event_date"],
+                payload.get("start_time") or None,
+                payload.get("end_time") or None,
+                payload["shift_name"],
+                payload["machine_code"],
+                machine_type,
+                payload["event_type"],
+                payload["severity"],
+                duration,
+                payload.get("description", ""),
+                payload.get("immediate_action", ""),
+                actor_id,
+                json.dumps(payload.get("custom_fields", {})),
+                workflow_state,
+                is_resolved,
+                effective_time_cost,
+                json.dumps(cost_failure_types),
+                responsible_person or None,
+                target_finish_date,
             ),
         )
         report_id = cursor.lastrowid
@@ -319,8 +404,13 @@ def create_abnormality(payload, actor_id=None):
 
 
 def list_records(
-    record_type, manager=False, page=1, page_size=50,
-    record_date=None, machine_code=None, formula_code=None,
+    record_type,
+    manager=False,
+    page=1,
+    page_size=50,
+    record_date=None,
+    machine_code=None,
+    formula_code=None,
 ):
     queries = {
         "production": """
@@ -396,13 +486,18 @@ def list_records(
     if record_type == "tracker" and not manager:
         for row in rows:
             row.pop("solution_provided", None)
-    if current_department() == "slitting":
+    if uses_slitting_workflow():
         rows = [slitting.enrich(row) for row in rows]
     return _json_safe_rows(rows), total
 
 
 def update_tracker(report_id, payload, manager=False):
-    operator_fields = {"responsible_person", "target_finish_date", "actual_finish_date", "solution_provided"}
+    operator_fields = {
+        "responsible_person",
+        "target_finish_date",
+        "actual_finish_date",
+        "solution_provided",
+    }
     manager_fields = operator_fields | {"solution_provided", "effectiveness", "state"}
     permitted_fields = manager_fields if manager else operator_fields
     changes = {key: value for key, value in payload.items() if key in permitted_fields}
@@ -424,9 +519,13 @@ def update_tracker(report_id, payload, manager=False):
             )
             row = cursor.fetchone()
             if not row or row["state"] != "open" or row["is_resolved"] != "no":
-                raise ValueError("Only unresolved open events can be updated from the ongoing tracker.")
+                raise ValueError(
+                    "Only unresolved open events can be updated from the ongoing tracker."
+                )
         if not (has_finish and has_solution):
-            raise ValueError("Enter both actual finish date and solution provided to close this event.")
+            raise ValueError(
+                "Enter both actual finish date and solution provided to close this event."
+            )
         changes.update({"is_resolved": "yes", "state": "resolved"})
 
     if changes.get("state") == "resolved" and not changes.get("solution_provided"):
@@ -523,12 +622,54 @@ SLITTING_STANDARD_FIELD_CATALOG = {
 # Stored as value|bilingual display text so manager edits keep the database value stable.
 STANDARD_FIELD_OPTIONS = {
     ("production", "shift_name"): ["Day|Day / 白班", "Night|Night / 夜班"],
-    ("production", "machine_code"): [item for item in ("J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10-1", "J10-2", "J10-3", "J10-4", "J10-5")],
+    ("production", "machine_code"): [
+        item
+        for item in (
+            "J1",
+            "J2",
+            "J3",
+            "J4",
+            "J5",
+            "J6",
+            "J7",
+            "J8",
+            "J9",
+            "J10-1",
+            "J10-2",
+            "J10-3",
+            "J10-4",
+            "J10-5",
+        )
+    ],
     ("production", "formula_code"): ["K1-26", "B1-1", "E3", "custom|Custom / 自定义"],
     ("abnormality", "shift_name"): ["Day|Day / 白班", "Night|Night / 夜班"],
-    ("abnormality", "machine_code"): [item for item in ("J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10-1", "J10-2", "J10-3", "J10-4", "J10-5", "NA|NA / 不适用")],
+    ("abnormality", "machine_code"): [
+        item
+        for item in (
+            "J1",
+            "J2",
+            "J3",
+            "J4",
+            "J5",
+            "J6",
+            "J7",
+            "J8",
+            "J9",
+            "J10-1",
+            "J10-2",
+            "J10-3",
+            "J10-4",
+            "J10-5",
+            "NA|NA / 不适用",
+        )
+    ],
     ("abnormality", "machine_type"): ["semi|Semi / 半自动", "auto|Auto / 全自动"],
-    ("abnormality", "severity"): ["normal|Normal / 正常", "low|Low / 低", "medium|Medium / 中", "high|High / 高"],
+    ("abnormality", "severity"): [
+        "normal|Normal / 正常",
+        "low|Low / 低",
+        "medium|Medium / 中",
+        "high|High / 高",
+    ],
     ("abnormality", "is_resolved"): ["no|No / 否", "yes|Yes / 是"],
     ("abnormality", "effective_time_cost"): ["no|No / 否", "yes|Yes / 是"],
 }
@@ -539,18 +680,23 @@ SLITTING_STANDARD_FIELD_OPTIONS = {
     ("production", "machine_code"): [item for item in slitting.MACHINES],
     ("abnormality", "shift_name"): ["Day|Day / 白班", "Night|Night / 夜班"],
     ("abnormality", "machine_code"): [*[item for item in slitting.MACHINES], "NA|NA / 不适用"],
-    ("abnormality", "severity"): ["normal|Normal / 正常", "low|Low / 低", "medium|Medium / 中", "high|High / 高"],
+    ("abnormality", "severity"): [
+        "normal|Normal / 正常",
+        "low|Low / 低",
+        "medium|Medium / 中",
+        "high|High / 高",
+    ],
     ("abnormality", "is_resolved"): ["no|No / 否", "yes|Yes / 是"],
     ("abnormality", "effective_time_cost"): ["no|No / 否", "yes|Yes / 是"],
 }
 
 
 def _standard_field_catalog():
-    return SLITTING_STANDARD_FIELD_CATALOG if current_department() == "slitting" else STANDARD_FIELD_CATALOG
+    return SLITTING_STANDARD_FIELD_CATALOG if uses_slitting_workflow() else STANDARD_FIELD_CATALOG
 
 
 def _standard_field_options():
-    return SLITTING_STANDARD_FIELD_OPTIONS if current_department() == "slitting" else STANDARD_FIELD_OPTIONS
+    return SLITTING_STANDARD_FIELD_OPTIONS if uses_slitting_workflow() else STANDARD_FIELD_OPTIONS
 
 
 def get_standard_field_settings(form_key):
@@ -570,7 +716,11 @@ def get_standard_field_settings(form_key):
             "label": saved.get(key, {}).get("label") or label,
             "help_text": saved.get(key, {}).get("help_text") or "",
             "input_type": input_type,
-            "options_json": saved.get(key, {}).get("options_json") if saved.get(key, {}).get("options_json") is not None else option_defaults.get((form_key, key), []),
+            "options_json": (
+                saved.get(key, {}).get("options_json")
+                if saved.get(key, {}).get("options_json") is not None
+                else option_defaults.get((form_key, key), [])
+            ),
             "is_configured": key in saved,
         }
         for key, label, input_type in catalog[form_key]
@@ -596,9 +746,22 @@ def save_standard_field_setting(form_key, payload):
             ON DUPLICATE KEY UPDATE label = VALUES(label), help_text = VALUES(help_text),
                 options_json = VALUES(options_json)
             """,
-            (form_key, field_key, label, help_text or None, json.dumps(options) if options else None),
+            (
+                form_key,
+                field_key,
+                label,
+                help_text or None,
+                json.dumps(options) if options else None,
+            ),
         )
-        _audit(cursor, None, "standard_field_setting", 0, "saved", {"form_key": form_key, "field_key": field_key})
+        _audit(
+            cursor,
+            None,
+            "standard_field_setting",
+            0,
+            "saved",
+            {"form_key": form_key, "field_key": field_key},
+        )
 
 
 def get_cost_failure_types(include_inactive=False):
@@ -612,8 +775,11 @@ def get_cost_failure_types(include_inactive=False):
 
 
 def get_event_types(include_inactive=False):
-    if current_department() == "slitting":
-        return [{"event_value":key,"display_name":key,"is_active":True} for key in slitting.CATEGORIES]
+    if uses_slitting_workflow():
+        return [
+            {"event_value": key, "display_name": key, "is_active": True}
+            for key in slitting.CATEGORIES
+        ]
     query = "SELECT event_value, display_name, is_active FROM system_import.event_type_options"
     if not include_inactive:
         query += " WHERE is_active = TRUE"
@@ -624,7 +790,7 @@ def get_event_types(include_inactive=False):
 
 
 def save_event_type(payload):
-    if current_department() == "slitting":
+    if uses_slitting_workflow():
         raise ValueError("Slitting uses the approved main/subcategory catalog.")
     event_value = str(payload.get("event_value", "")).strip()
     display_name = str(payload.get("display_name", "")).strip()
@@ -644,7 +810,7 @@ def save_event_type(payload):
 
 
 def deactivate_event_type(event_value):
-    if current_department() == "slitting":
+    if uses_slitting_workflow():
         raise ValueError("Slitting uses the approved main/subcategory catalog.")
     with transaction() as cursor:
         cursor.execute(
@@ -690,7 +856,10 @@ def deactivate_cost_failure_type(type_code):
 
 def save_field_definition(form_key, payload):
     valid_types = {"text", "number", "date", "select", "textarea"}
-    if form_key not in {"production", "abnormality"} or payload.get("input_type") not in valid_types:
+    if (
+        form_key not in {"production", "abnormality"}
+        or payload.get("input_type") not in valid_types
+    ):
         raise ValueError("Invalid form or input type.")
 
     key = str(payload.get("field_key", "")).strip().lower().replace(" ", "_")
@@ -715,43 +884,43 @@ def save_field_definition(form_key, payload):
                 is_active = TRUE
             """,
             (
-                form_key, key, payload.get("label", key), payload["input_type"],
-                json.dumps(options), bool(payload.get("is_required", False)),
+                form_key,
+                key,
+                payload.get("label", key),
+                payload["input_type"],
+                json.dumps(options),
+                bool(payload.get("is_required", False)),
                 int(payload.get("display_order", 200)),
             ),
         )
-        _audit(cursor, None, "field_definition", 0, "saved", {"form_key": form_key, "field_key": key})
+        _audit(
+            cursor, None, "field_definition", 0, "saved", {"form_key": form_key, "field_key": key}
+        )
 
 
 def manager_dashboard():
     with transaction() as cursor:
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT COUNT(*) AS records, COALESCE(SUM(actual_quantity), 0) AS actual,
                    COALESCE(SUM(qualified_quantity), 0) AS qualified
             FROM system_import.production_records
             WHERE record_date = CURDATE()
-            """
-        )
+            """)
         production = cursor.fetchone()
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT COUNT(*) AS open_events, COALESCE(SUM(duration_minutes), 0) AS downtime
             FROM system_import.abnormality_reports
             WHERE event_date = CURDATE() AND state = 'open'
-            """
-        )
+            """)
         abnormality = cursor.fetchone()
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT machine_code, COUNT(*) AS event_count,
                    COALESCE(SUM(duration_minutes), 0) AS downtime
             FROM system_import.abnormality_reports
             WHERE event_date >= CURDATE() - INTERVAL 30 DAY
             GROUP BY machine_code
             ORDER BY downtime DESC LIMIT 5
-            """
-        )
+            """)
         machines = cursor.fetchall()
 
     actual = float(production["actual"] or 0)
@@ -765,33 +934,175 @@ def manager_dashboard():
     }
 
 
-DAILY_TASK_TYPES = {"production", "cleaning", "custom", "slitting_production", "slitting_schedule", "slitting_training"}
-DAILY_TASK_MACHINES = {*(f"J{number}" for number in range(1, 10)), *(f"J10-{number}" for number in range(1, 6))}
+DAILY_TASK_TYPES = {
+    "production",
+    "cleaning",
+    "custom",
+    "slitting_production",
+    "slitting_schedule",
+    "slitting_training",
+}
+DAILY_TASK_MACHINES = {
+    *(f"J{number}" for number in range(1, 10)),
+    *(f"J10-{number}" for number in range(1, 6)),
+}
 SLITTING_TASK_PRODUCTS = {
-    "513MM", "514.9MM", "515.6MM", "547MM", "242MM", "515.4MM", "270.6MM", "270MM",
-    "88.8MM", "67.1MM", "73.8MM", "96MM", "264.5MM", "269.8MM", "61MM", "73.7MM",
-    "196MM", "557.20MM", "62.3MM", "61.1MM", "61.6MM", "93.7MM", "73.5MM",
+    "513MM",
+    "514.9MM",
+    "515.6MM",
+    "547MM",
+    "242MM",
+    "515.4MM",
+    "270.6MM",
+    "270MM",
+    "88.8MM",
+    "67.1MM",
+    "73.8MM",
+    "96MM",
+    "264.5MM",
+    "269.8MM",
+    "61MM",
+    "73.7MM",
+    "196MM",
+    "557.20MM",
+    "62.3MM",
+    "61.1MM",
+    "61.6MM",
+    "93.7MM",
+    "73.5MM",
 }
 SLITTING_TASK_STATUSES = {"production_in_progress", "re_cut", "label_changing"}
 SLITTING_TARGET_UNITS = {"sr", "MR", "custom"}
 
 DISPLAY_BLOCK_DEFAULTS = [
-    {"key": "task", "title": "Today's task / 今日任务", "visible": True, "order": 10, "width": 2, "height": 2, "font_size": 16},
-    {"key": "reminders", "title": "Reminders / 提醒事项", "visible": True, "order": 15, "width": 2, "height": 1, "font_size": 16},
-    {"key": "rates", "title": "Production rates / 生产率", "visible": True, "order": 20, "width": 1, "height": 1, "font_size": 16},
-    {"key": "pending_qualification", "title": "Pending qualification data / 待补录合格数据", "visible": True, "order": 25, "width": 1, "height": 1, "font_size": 16},
-    {"key": "production_trend", "title": "7-day production / 7日生产趋势", "visible": True, "order": 30, "width": 3, "height": 2, "font_size": 15},
-    {"key": "abnormality_trend", "title": "Abnormalities by date / 每日异常", "visible": True, "order": 35, "width": 2, "height": 2, "font_size": 15},
-    {"key": "ongoing", "title": "Ongoing abnormalities / 进行中异常", "visible": True, "order": 40, "width": 5, "height": 2, "font_size": 16},
+    {
+        "key": "task",
+        "title": "Today's task / 今日任务",
+        "visible": True,
+        "order": 10,
+        "width": 2,
+        "height": 2,
+        "font_size": 16,
+    },
+    {
+        "key": "reminders",
+        "title": "Reminders / 提醒事项",
+        "visible": True,
+        "order": 15,
+        "width": 2,
+        "height": 1,
+        "font_size": 16,
+    },
+    {
+        "key": "rates",
+        "title": "Production rates / 生产率",
+        "visible": True,
+        "order": 20,
+        "width": 1,
+        "height": 1,
+        "font_size": 16,
+    },
+    {
+        "key": "pending_qualification",
+        "title": "Pending qualification data / 待补录合格数据",
+        "visible": True,
+        "order": 25,
+        "width": 1,
+        "height": 1,
+        "font_size": 16,
+    },
+    {
+        "key": "production_trend",
+        "title": "7-day production / 7日生产趋势",
+        "visible": True,
+        "order": 30,
+        "width": 3,
+        "height": 2,
+        "font_size": 15,
+    },
+    {
+        "key": "abnormality_trend",
+        "title": "Abnormalities by date / 每日异常",
+        "visible": True,
+        "order": 35,
+        "width": 2,
+        "height": 2,
+        "font_size": 15,
+    },
+    {
+        "key": "ongoing",
+        "title": "Ongoing abnormalities / 进行中异常",
+        "visible": True,
+        "order": 40,
+        "width": 5,
+        "height": 2,
+        "font_size": 16,
+    },
 ]
 SLITTING_DISPLAY_BLOCK_DEFAULTS = [
-    {"key": "slitting_task", "title": "Slitting task overview / 分切及包装任务概览", "visible": True, "order": 5, "width": 3, "height": 3, "font_size": 14},
-    {"key": "slitting_training", "title": "Training / 培训", "visible": True, "order": 10, "width": 2, "height": 2, "font_size": 14},
-    {"key": "slitting_reminders", "title": "Reminders / 提醒事项", "visible": True, "order": 15, "width": 2, "height": 1, "font_size": 15},
-    {"key": "slitting_pending_qualification", "title": "Pending qualified rolls / 待补录合格卷数", "visible": True, "order": 18, "width": 2, "height": 2, "font_size": 15},
-    {"key": "slitting_events", "title": "Ongoing abnormalities / 进行中异常", "visible": True, "order": 20, "width": 5, "height": 2, "font_size": 16},
-    {"key": "slitting_production_trend", "title": "7-day production by machine and width / 7日机台与幅宽生产", "visible": True, "order": 30, "width": 3, "height": 2, "font_size": 14},
-    {"key": "slitting_abnormality_trend", "title": "Abnormal downtime by date / 每日异常停机", "visible": True, "order": 35, "width": 2, "height": 2, "font_size": 14},
+    {
+        "key": "slitting_task",
+        "title": "Slitting task overview / 分切及包装任务概览",
+        "visible": True,
+        "order": 5,
+        "width": 3,
+        "height": 3,
+        "font_size": 14,
+    },
+    {
+        "key": "slitting_training",
+        "title": "Training / 培训",
+        "visible": True,
+        "order": 10,
+        "width": 2,
+        "height": 2,
+        "font_size": 14,
+    },
+    {
+        "key": "slitting_reminders",
+        "title": "Reminders / 提醒事项",
+        "visible": True,
+        "order": 15,
+        "width": 2,
+        "height": 1,
+        "font_size": 15,
+    },
+    {
+        "key": "slitting_pending_qualification",
+        "title": "Pending qualified rolls / 待补录合格卷数",
+        "visible": True,
+        "order": 18,
+        "width": 2,
+        "height": 2,
+        "font_size": 15,
+    },
+    {
+        "key": "slitting_events",
+        "title": "Ongoing abnormalities / 进行中异常",
+        "visible": True,
+        "order": 20,
+        "width": 5,
+        "height": 2,
+        "font_size": 16,
+    },
+    {
+        "key": "slitting_production_trend",
+        "title": "7-day production by machine and width / 7日机台与幅宽生产",
+        "visible": True,
+        "order": 30,
+        "width": 3,
+        "height": 2,
+        "font_size": 14,
+    },
+    {
+        "key": "slitting_abnormality_trend",
+        "title": "Abnormal downtime by date / 每日异常停机",
+        "visible": True,
+        "order": 35,
+        "width": 2,
+        "height": 2,
+        "font_size": 14,
+    },
 ]
 DISPLAY_EVENT_COLUMN_DEFAULTS = [
     {"key": "event_date", "label": "Event date / 事件日期", "visible": True, "order": 10},
@@ -801,16 +1112,51 @@ DISPLAY_EVENT_COLUMN_DEFAULTS = [
     {"key": "machine_code", "label": "Machine / 设备", "visible": True, "order": 50},
     {"key": "machine_type", "label": "Process / 工艺", "visible": True, "order": 60},
     {"key": "event_type", "label": "Event type / 事件类型", "visible": True, "order": 70},
-    {"key": "severity", "label": "Severity / Priority / 严重程度 / 优先级", "visible": True, "order": 80},
-    {"key": "duration_minutes", "label": "Duration (minutes) / 持续时间（分钟）", "visible": True, "order": 90},
+    {
+        "key": "severity",
+        "label": "Severity / Priority / 严重程度 / 优先级",
+        "visible": True,
+        "order": 80,
+    },
+    {
+        "key": "duration_minutes",
+        "label": "Duration (minutes) / 持续时间（分钟）",
+        "visible": True,
+        "order": 90,
+    },
     {"key": "is_resolved", "label": "Resolved? / 是否解决", "visible": True, "order": 100},
-    {"key": "responsible_person", "label": "Responsible person / 责任人", "visible": True, "order": 110},
-    {"key": "target_finish_date", "label": "Expected finish / 预计完成", "visible": True, "order": 120},
-    {"key": "effective_time_cost", "label": "Effective time cost? / 是否为有效时间成本", "visible": True, "order": 130},
-    {"key": "cost_failure_types", "label": "Cost-failure types / 成本失效类型", "visible": True, "order": 140},
+    {
+        "key": "responsible_person",
+        "label": "Responsible person / 责任人",
+        "visible": True,
+        "order": 110,
+    },
+    {
+        "key": "target_finish_date",
+        "label": "Expected finish / 预计完成",
+        "visible": True,
+        "order": 120,
+    },
+    {
+        "key": "effective_time_cost",
+        "label": "Effective time cost? / 是否为有效时间成本",
+        "visible": True,
+        "order": 130,
+    },
+    {
+        "key": "cost_failure_types",
+        "label": "Cost-failure types / 成本失效类型",
+        "visible": True,
+        "order": 140,
+    },
     {"key": "potential_cost", "label": "Potential cost / 潜在成本", "visible": True, "order": 150},
     {"key": "description", "label": "What happened? / 发生了什么？", "visible": True, "order": 160},
-    {"key": "immediate_action", "label": "Immediate action / 立即措施", "visible": True, "order": 170},
+    {
+        "key": "immediate_action",
+        "label": "Immediate action / 立即措施",
+        "visible": True,
+        "order": 170,
+    },
 ]
 
 DISPLAY_BRANDING_DEFAULTS = {
@@ -832,98 +1178,216 @@ SLITTING_EVENT_COLUMN_DEFAULTS = [
     {"key": "event_type", "label": "Main category / 主类别", "visible": True, "order": 20},
     {"key": "subcategory", "label": "Subcategory / 子类别", "visible": True, "order": 30},
     {"key": "event_notes", "label": "Notes / 备注", "visible": True, "order": 40},
-    {"key": "duration_minutes", "label": "Time loss (min) / 损失分钟", "visible": True, "order": 50},
+    {
+        "key": "duration_minutes",
+        "label": "Time loss (min) / 损失分钟",
+        "visible": True,
+        "order": 50,
+    },
     {"key": "is_resolved", "label": "Resolved / 已解决", "visible": True, "order": 60},
 ]
 
+
 def default_display_settings():
-    if current_department() == "slitting":
-        return {"layout_version": 4, "branding": dict(SLITTING_DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in SLITTING_DISPLAY_BLOCK_DEFAULTS], "event_columns": [dict(x) for x in SLITTING_EVENT_COLUMN_DEFAULTS]}
-    return {"layout_version": 4, "branding": dict(DISPLAY_BRANDING_DEFAULTS), "blocks": [dict(x) for x in DISPLAY_BLOCK_DEFAULTS], "event_columns": []}
+    if uses_slitting_workflow():
+        branding = dict(SLITTING_DISPLAY_BRANDING_DEFAULTS)
+        blocks = [dict(x) for x in SLITTING_DISPLAY_BLOCK_DEFAULTS]
+        if current_department() == "coating":
+            branding = {
+                key: value.replace("SLITTING", "COATING")
+                .replace("Slitting", "Coating")
+                .replace("分切", "涂布")
+                for key, value in branding.items()
+            }
+            for block in blocks:
+                block["title"] = (
+                    block["title"].replace("Slitting", "Coating").replace("分切", "涂布")
+                )
+        return {
+            "layout_version": 4,
+            "branding": branding,
+            "blocks": blocks,
+            "event_columns": [dict(x) for x in SLITTING_EVENT_COLUMN_DEFAULTS],
+        }
+    return {
+        "layout_version": 4,
+        "branding": dict(DISPLAY_BRANDING_DEFAULTS),
+        "blocks": [dict(x) for x in DISPLAY_BLOCK_DEFAULTS],
+        "event_columns": [],
+    }
+
 
 def get_display_settings():
     with transaction() as cursor:
-        cursor.execute("SELECT settings_json FROM system_import.display_settings WHERE setting_key = 'factory_display'")
+        cursor.execute(
+            "SELECT settings_json FROM system_import.display_settings WHERE setting_key = 'factory_display'"
+        )
         row = cursor.fetchone()
-    if not row: return default_display_settings()
-    saved = json.loads(row["settings_json"]) if isinstance(row["settings_json"], str) else row["settings_json"]
+    if not row:
+        return default_display_settings()
+    saved = (
+        json.loads(row["settings_json"])
+        if isinstance(row["settings_json"], str)
+        else row["settings_json"]
+    )
     if int(saved.get("layout_version", 1)) < 2:
         for block in saved.get("blocks", []):
             block["width"] = {1: 2, 2: 4, 3: 5}.get(int(block.get("width", 1)), 2)
-            if block.get("type") == "static_text": block.setdefault("heading_level", "h2")
+            if block.get("type") == "static_text":
+                block.setdefault("heading_level", "h2")
         saved["layout_version"] = 2
-    if current_department() == "slitting" and int(saved.get("layout_version", 1)) < 3:
+    if uses_slitting_workflow() and int(saved.get("layout_version", 1)) < 3:
         for block in saved.get("blocks", []):
             if block.get("key") == "slitting_task":
                 block.update({"width": 3, "height": 3, "font_size": 14})
         saved["layout_version"] = 3
-    if current_department() == "slitting" and int(saved.get("layout_version", 1)) < 4:
+    if uses_slitting_workflow() and int(saved.get("layout_version", 1)) < 4:
         saved["blocks"] = [
-            block for block in saved.get("blocks", [])
-            if block.get("key") != "slitting_training"
+            block for block in saved.get("blocks", []) if block.get("key") != "slitting_training"
         ]
         saved["layout_version"] = 4
     if current_department() == "slurry" and int(saved.get("layout_version", 1)) < 3:
-        saved["blocks"] = [block for block in saved.get("blocks", []) if block.get("key") not in {"events", "reminders"}]
+        saved["blocks"] = [
+            block
+            for block in saved.get("blocks", [])
+            if block.get("key") not in {"events", "reminders"}
+        ]
         saved["event_columns"] = []
         saved["layout_version"] = 3
     defaults = default_display_settings()
     if isinstance(saved.get("branding"), dict):
-        defaults["branding"].update({key: str(saved["branding"].get(key, value)) for key, value in defaults["branding"].items()})
+        defaults["branding"].update(
+            {
+                key: str(saved["branding"].get(key, value))
+                for key, value in defaults["branding"].items()
+            }
+        )
     for group in ("blocks", "event_columns"):
         saved_items = saved.get(group, [])
         saved_by_key = {item["key"]: item for item in saved_items}
         default_keys = {item["key"] for item in defaults[group]}
-        defaults[group] = [{**item, **saved_by_key.get(item["key"], {})} for item in defaults[group]]
+        defaults[group] = [
+            {**item, **saved_by_key.get(item["key"], {})} for item in defaults[group]
+        ]
         if group == "blocks":
-            defaults[group].extend(item for item in saved_items if item.get("key") not in default_keys and item.get("type") == "static_text")
+            defaults[group].extend(
+                item
+                for item in saved_items
+                if item.get("key") not in default_keys and item.get("type") == "static_text"
+            )
+    if current_department() == "coating":
+        replacements = (
+            ("SLITTING", "COATING"),
+            ("Slitting", "Coating"),
+            ("slitting", "coating"),
+            ("分切", "涂布"),
+        )
+
+        def coating_label(value):
+            value = str(value)
+            for source, target in replacements:
+                value = value.replace(source, target)
+            return value
+
+        defaults["branding"] = {
+            key: coating_label(value) for key, value in defaults["branding"].items()
+        }
+        for block in defaults["blocks"]:
+            block["title"] = coating_label(block["title"])
     return defaults
+
 
 def save_display_settings(payload, actor_id=None):
     defaults = default_display_settings()
     cleaned = {"layout_version": defaults["layout_version"]}
     branding = payload.get("branding", defaults["branding"])
-    if not isinstance(branding, dict): raise ValueError("Branding must be an object.")
-    cleaned_branding = {key: str(branding.get(key, fallback)).strip() for key, fallback in defaults["branding"].items()}
-    if not cleaned_branding["title"] or not cleaned_branding["display_title"] or any(len(value) > 160 for value in cleaned_branding.values()):
-        raise ValueError("Application and display titles are required and header text must be 160 characters or fewer.")
+    if not isinstance(branding, dict):
+        raise ValueError("Branding must be an object.")
+    cleaned_branding = {
+        key: str(branding.get(key, fallback)).strip()
+        for key, fallback in defaults["branding"].items()
+    }
+    if (
+        not cleaned_branding["title"]
+        or not cleaned_branding["display_title"]
+        or any(len(value) > 160 for value in cleaned_branding.values())
+    ):
+        raise ValueError(
+            "Application and display titles are required and header text must be 160 characters or fewer."
+        )
     cleaned["branding"] = cleaned_branding
     for group in ("blocks", "event_columns"):
-        if not isinstance(payload.get(group), list): raise ValueError(f"{group} must be a list.")
-        supplied = {str(x.get("key")): x for x in payload[group] if isinstance(x, dict)}; items = []
+        if not isinstance(payload.get(group), list):
+            raise ValueError(f"{group} must be a list.")
+        supplied = {str(x.get("key")): x for x in payload[group] if isinstance(x, dict)}
+        items = []
         for fallback in defaults[group]:
-            item, label_key = supplied.get(fallback["key"], {}), ("title" if group == "blocks" else "label")
+            item, label_key = supplied.get(fallback["key"], {}), (
+                "title" if group == "blocks" else "label"
+            )
             label = str(item.get(label_key, fallback[label_key])).strip()
-            if not label or len(label) > 160: raise ValueError("Display titles must contain 1 to 160 characters.")
-            try: order = max(0, min(int(item.get("order", fallback["order"])), 999))
-            except (TypeError, ValueError) as exc: raise ValueError("Display order must be a whole number.") from exc
-            result = {"key": fallback["key"], label_key: label, "visible": bool(item.get("visible", False)), "order": order}
+            if not label or len(label) > 160:
+                raise ValueError("Display titles must contain 1 to 160 characters.")
+            try:
+                order = max(0, min(int(item.get("order", fallback["order"])), 999))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Display order must be a whole number.") from exc
+            result = {
+                "key": fallback["key"],
+                label_key: label,
+                "visible": bool(item.get("visible", False)),
+                "order": order,
+            }
             if group == "blocks":
                 result["width"] = max(1, min(int(item.get("width", fallback["width"])), 5))
-                result["height"] = max(1, min(int(item.get("height", fallback.get("height", 1))), 5))
-                result["font_size"] = max(12, min(int(item.get("font_size", fallback.get("font_size", 16))), 36))
+                result["height"] = max(
+                    1, min(int(item.get("height", fallback.get("height", 1))), 5)
+                )
+                result["font_size"] = max(
+                    12, min(int(item.get("font_size", fallback.get("font_size", 16))), 36)
+                )
             items.append(result)
         if group == "blocks":
             for item in payload["blocks"]:
                 key = str(item.get("key", ""))
-                if key in {fallback["key"] for fallback in defaults["blocks"]} or item.get("type") != "static_text":
+                if (
+                    key in {fallback["key"] for fallback in defaults["blocks"]}
+                    or item.get("type") != "static_text"
+                ):
                     continue
                 if not re.fullmatch(r"text_[a-f0-9-]{8,40}", key):
                     raise ValueError("Permanent text block identifier is invalid.")
-                title, content = str(item.get("title", "")).strip(), str(item.get("content", "")).strip()
-                if not title or len(title) > 160: raise ValueError("Permanent block titles must contain 1 to 160 characters.")
-                if len(content) > 4000: raise ValueError("Permanent text must be 4,000 characters or fewer.")
+                title, content = (
+                    str(item.get("title", "")).strip(),
+                    str(item.get("content", "")).strip(),
+                )
+                if not title or len(title) > 160:
+                    raise ValueError("Permanent block titles must contain 1 to 160 characters.")
+                if len(content) > 4000:
+                    raise ValueError("Permanent text must be 4,000 characters or fewer.")
                 heading_level = str(item.get("heading_level", "h2")).lower()
-                if heading_level not in {"h1", "h2"}: raise ValueError("Permanent block heading must be Heading 1 or Heading 2.")
-                items.append({"key": key, "type": "static_text", "title": title, "content": content,
-                              "heading_level": heading_level,
-                              "visible": bool(item.get("visible", True)), "order": max(0, min(int(item.get("order", 900)), 999)),
-                              "width": max(1, min(int(item.get("width", 5)), 5)),
-                              "height": max(1, min(int(item.get("height", 1)), 5)),
-                              "font_size": max(12, min(int(item.get("font_size", 16)), 36))})
+                if heading_level not in {"h1", "h2"}:
+                    raise ValueError("Permanent block heading must be Heading 1 or Heading 2.")
+                items.append(
+                    {
+                        "key": key,
+                        "type": "static_text",
+                        "title": title,
+                        "content": content,
+                        "heading_level": heading_level,
+                        "visible": bool(item.get("visible", True)),
+                        "order": max(0, min(int(item.get("order", 900)), 999)),
+                        "width": max(1, min(int(item.get("width", 5)), 5)),
+                        "height": max(1, min(int(item.get("height", 1)), 5)),
+                        "font_size": max(12, min(int(item.get("font_size", 16)), 36)),
+                    }
+                )
         cleaned[group] = items
     with transaction() as cursor:
-        cursor.execute("INSERT INTO system_import.display_settings (setting_key, settings_json) VALUES ('factory_display', %s) ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)", (json.dumps(cleaned),))
+        cursor.execute(
+            "INSERT INTO system_import.display_settings (setting_key, settings_json) VALUES ('factory_display', %s) ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)",
+            (json.dumps(cleaned),),
+        )
         _audit(cursor, actor_id, "display_settings", 0, "saved", cleaned)
     return cleaned
 
@@ -935,7 +1399,13 @@ def _legacy_task_items(task):
     for task_type in types:
         item = {"type": task_type, "description": ""}
         if task_type == "production":
-            item.update({"formula_code": task.get("formula_code") or "", "amount_needed": task.get("amount_needed"), "machine_assigned": task.get("machine_assigned") or ""})
+            item.update(
+                {
+                    "formula_code": task.get("formula_code") or "",
+                    "amount_needed": task.get("amount_needed"),
+                    "machine_assigned": task.get("machine_assigned") or "",
+                }
+            )
         elif task_type == "custom":
             item["description"] = task.get("custom_task") or ""
         items.append(item)
@@ -975,7 +1445,9 @@ def get_daily_task(record_date=None, shift_name=None):
     current_date, current_shift = current_production_slot()
     selected_date = record_date or current_date
     selected_shift = str(shift_name or current_shift).title()
-    allowed_shifts = {"Day", "Night"} if current_department() == "slitting" else {"Day", "Day 08-20", "Day 08-17"}
+    allowed_shifts = (
+        {"Day", "Night"} if uses_slitting_workflow() else {"Day", "Day 08-20", "Day 08-17"}
+    )
     if selected_shift not in allowed_shifts:
         raise ValueError("Choose Day or Night shift.")
     if isinstance(selected_date, str):
@@ -994,7 +1466,14 @@ def get_daily_task(record_date=None, shift_name=None):
         )
         task = cursor.fetchone()
     if not task:
-        return {"record_date": selected_date.isoformat(), "shift_name": selected_shift, "shift_label": production_shift_label(selected_date, selected_shift), "task_items": [], "reminders": [], "updated_at": None}
+        return {
+            "record_date": selected_date.isoformat(),
+            "shift_name": selected_shift,
+            "shift_label": production_shift_label(selected_date, selected_shift),
+            "task_items": [],
+            "reminders": [],
+            "updated_at": None,
+        }
     task["task_items"] = json.loads(task["task_items"] or "null") or _legacy_task_items(task)
     task["reminders"] = json.loads(task["reminders"] or "[]")
     task["shift_label"] = production_shift_label(selected_date, selected_shift)
@@ -1009,7 +1488,9 @@ def save_daily_task(payload, actor_id=None):
     except ValueError as exc:
         raise ValueError("Choose a valid task date.") from exc
     shift_name = str(payload.get("shift_name") or default_shift).title()
-    allowed_shifts = {"Day", "Night"} if current_department() == "slitting" else {"Day", "Day 08-20", "Day 08-17"}
+    allowed_shifts = (
+        {"Day", "Night"} if uses_slitting_workflow() else {"Day", "Day 08-20", "Day 08-17"}
+    )
     if shift_name not in allowed_shifts:
         raise ValueError("Choose Day or Night shift.")
     raw_items = payload.get("task_items", [])
@@ -1027,63 +1508,125 @@ def save_daily_task(payload, actor_id=None):
             reminders.append(clean_reminder)
 
     task_items = []
-    if current_department() == "slitting":
+    if uses_slitting_workflow():
         production_count = schedule_count = training_count = 0
         for raw_item in raw_items:
-            if not isinstance(raw_item, dict): raise ValueError("Each task item must be valid.")
+            if not isinstance(raw_item, dict):
+                raise ValueError("Each task item must be valid.")
             task_type = str(raw_item.get("type", "")).strip().lower()
             if task_type == "slitting_production":
                 production_count += 1
-                product_item = str(raw_item.get("product_item", "")).replace(" ", "").strip().upper()
+                product_item = (
+                    str(raw_item.get("product_item", "")).replace(" ", "").strip().upper()
+                )
                 custom_product_item = str(raw_item.get("custom_product_item", "")).strip()
                 status = str(raw_item.get("production_status", "")).strip()
                 custom_status = str(raw_item.get("custom_status", "")).strip()
                 target_unit = str(raw_item.get("target_unit", "")).strip()
                 custom_unit = str(raw_item.get("custom_unit", "")).strip()
                 if product_item == "CUSTOM":
-                    if not custom_product_item or len(custom_product_item) > 120: raise ValueError("Enter a custom product item of 120 characters or fewer.")
+                    if not custom_product_item or len(custom_product_item) > 120:
+                        raise ValueError("Enter a custom product item of 120 characters or fewer.")
                     product_item = custom_product_item
-                elif product_item not in SLITTING_TASK_PRODUCTS: raise ValueError("Choose a listed Slitting production item or Custom.")
+                elif product_item not in SLITTING_TASK_PRODUCTS:
+                    raise ValueError("Choose a listed Slitting production item or Custom.")
                 if status == "CUSTOM":
                     if not custom_status or len(custom_status) > 120:
-                        raise ValueError("Enter a custom production status of 120 characters or fewer.")
+                        raise ValueError(
+                            "Enter a custom production status of 120 characters or fewer."
+                        )
                     status = custom_status
                 elif status not in SLITTING_TASK_STATUSES:
                     raise ValueError("Choose a valid Slitting production status or Custom.")
-                if target_unit not in SLITTING_TARGET_UNITS: raise ValueError("Specify whether the production target uses sr, MR, or a custom unit.")
-                if target_unit == "custom" and (not custom_unit or len(custom_unit) > 30): raise ValueError("Enter a custom production target unit of 30 characters or fewer.")
-                try: target = float(raw_item.get("production_target"))
-                except (TypeError, ValueError) as exc: raise ValueError("Production target must be a number.") from exc
-                if target < 0 or target > 1000000: raise ValueError("Production target cannot be negative.")
-                task_items.append({"type": task_type, "product_item": product_item, "production_status": status, "production_target": target, "target_unit": target_unit, "custom_unit": custom_unit if target_unit == "custom" else ""})
+                if target_unit not in SLITTING_TARGET_UNITS:
+                    raise ValueError(
+                        "Specify whether the production target uses sr, MR, or a custom unit."
+                    )
+                if target_unit == "custom" and (not custom_unit or len(custom_unit) > 30):
+                    raise ValueError(
+                        "Enter a custom production target unit of 30 characters or fewer."
+                    )
+                try:
+                    target = float(raw_item.get("production_target"))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Production target must be a number.") from exc
+                if target < 0 or target > 1000000:
+                    raise ValueError("Production target cannot be negative.")
+                task_items.append(
+                    {
+                        "type": task_type,
+                        "product_item": product_item,
+                        "production_status": status,
+                        "production_target": target,
+                        "target_unit": target_unit,
+                        "custom_unit": custom_unit if target_unit == "custom" else "",
+                    }
+                )
             elif task_type == "slitting_schedule":
                 schedule_count += 1
                 machine = str(raw_item.get("machine", "")).strip().upper()
-                product_item = str(raw_item.get("product_item", "")).replace(" ", "").strip().upper()
+                product_item = (
+                    str(raw_item.get("product_item", "")).replace(" ", "").strip().upper()
+                )
                 custom_product_item = str(raw_item.get("custom_product_item", "")).strip()
                 planned_input = str(raw_item.get("planned_input", "")).strip()
                 operator = str(raw_item.get("operator", "")).strip()
                 shift_lead = str(raw_item.get("shift_lead", "")).strip()
-                if machine not in {choice["value"] for choice in slitting.machine_choices("production")}: raise ValueError("Choose a configured Slitting machine.")
+                if machine not in {
+                    choice["value"] for choice in slitting.machine_choices("production")
+                }:
+                    raise ValueError("Choose a configured Slitting machine.")
                 if product_item == "CUSTOM":
-                    if not custom_product_item or len(custom_product_item) > 120: raise ValueError("Enter a custom scheduled product item of 120 characters or fewer.")
+                    if not custom_product_item or len(custom_product_item) > 120:
+                        raise ValueError(
+                            "Enter a custom scheduled product item of 120 characters or fewer."
+                        )
                     product_item = custom_product_item
-                elif product_item not in SLITTING_TASK_PRODUCTS: raise ValueError("Choose a listed Slitting production item or Custom.")
-                if not planned_input or len(planned_input) > 120: raise ValueError("Schedule planned input is required and must be 120 characters or fewer.")
-                if not operator or len(operator) > 120: raise ValueError("Schedule operator is required and must be 120 characters or fewer.")
-                if not shift_lead or len(shift_lead) > 120: raise ValueError("Schedule shift lead is required and must be 120 characters or fewer.")
-                task_items.append({"type": task_type, "machine": machine, "product_item": product_item, "planned_input": planned_input, "operator": operator, "shift_lead": shift_lead})
+                elif product_item not in SLITTING_TASK_PRODUCTS:
+                    raise ValueError("Choose a listed Slitting production item or Custom.")
+                if not planned_input or len(planned_input) > 120:
+                    raise ValueError(
+                        "Schedule planned input is required and must be 120 characters or fewer."
+                    )
+                if not operator or len(operator) > 120:
+                    raise ValueError(
+                        "Schedule operator is required and must be 120 characters or fewer."
+                    )
+                if not shift_lead or len(shift_lead) > 120:
+                    raise ValueError(
+                        "Schedule shift lead is required and must be 120 characters or fewer."
+                    )
+                task_items.append(
+                    {
+                        "type": task_type,
+                        "machine": machine,
+                        "product_item": product_item,
+                        "planned_input": planned_input,
+                        "operator": operator,
+                        "shift_lead": shift_lead,
+                    }
+                )
             elif task_type == "slitting_training":
                 training_count += 1
-                training = {key: str(raw_item.get(key, "")).strip() for key in ("training_item", "training_type", "subject", "time")}
-                if any(not value for value in training.values()): raise ValueError("Complete training item, type, person or group being trained, and time.")
-                if any(len(value) > 120 for value in training.values()): raise ValueError("Each training field must be 120 characters or fewer.")
+                training = {
+                    key: str(raw_item.get(key, "")).strip()
+                    for key in ("training_item", "training_type", "subject", "time")
+                }
+                if any(not value for value in training.values()):
+                    raise ValueError(
+                        "Complete training item, type, person or group being trained, and time."
+                    )
+                if any(len(value) > 120 for value in training.values()):
+                    raise ValueError("Each training field must be 120 characters or fewer.")
                 task_items.append({"type": task_type, **training})
             else:
                 raise ValueError("Slitting tasks must be production, schedule, or training items.")
-        if not production_count and not training_count: raise ValueError("Add at least one Slitting production or training item.")
-        if production_count and not schedule_count: raise ValueError("Add at least one machine schedule row for production.")
-        if schedule_count and not production_count: raise ValueError("A machine schedule requires at least one production item.")
+        if not production_count and not training_count:
+            raise ValueError("Add at least one Slitting production or training item.")
+        if production_count and not schedule_count:
+            raise ValueError("Add at least one machine schedule row for production.")
+        if schedule_count and not production_count:
+            raise ValueError("A machine schedule requires at least one production item.")
     else:
         task_items = _clean_standard_daily_task_items(raw_items)
 
@@ -1102,10 +1645,33 @@ def save_daily_task(payload, actor_id=None):
                 formula_code = VALUES(formula_code), amount_needed = VALUES(amount_needed),
                 machine_assigned = VALUES(machine_assigned), updated_by = VALUES(updated_by)
             """,
-            (task_date, shift_name, json.dumps(task_types), json.dumps(task_items), json.dumps(reminders), first_custom.get("description") or None,
-             first_production.get("formula_code"), first_production.get("amount_needed"), first_production.get("machine_assigned"), actor_id),
+            (
+                task_date,
+                shift_name,
+                json.dumps(task_types),
+                json.dumps(task_items),
+                json.dumps(reminders),
+                first_custom.get("description") or None,
+                first_production.get("formula_code"),
+                first_production.get("amount_needed"),
+                first_production.get("machine_assigned"),
+                actor_id,
+            ),
         )
-        _audit(cursor, actor_id, "daily_task", 0, "saved", {"record_date": task_date.isoformat(), "shift_name": shift_name, "task_types": task_types, "item_count": len(task_items), "reminder_count": len(reminders)})
+        _audit(
+            cursor,
+            actor_id,
+            "daily_task",
+            0,
+            "saved",
+            {
+                "record_date": task_date.isoformat(),
+                "shift_name": shift_name,
+                "task_types": task_types,
+                "item_count": len(task_items),
+                "reminder_count": len(reminders),
+            },
+        )
 
 
 def _clean_standard_daily_task_items(raw_items):
@@ -1143,7 +1709,14 @@ def _clean_standard_daily_task_items(raw_items):
                 raise ValueError("Weight needed must be a valid number.") from exc
             if weight_needed < 0:
                 raise ValueError("Weight needed cannot be negative.")
-            item.update({"formula_code": formula_code, "amount_needed": amount_needed, "weight_needed": weight_needed, "machine_assigned": machine_assigned})
+            item.update(
+                {
+                    "formula_code": formula_code,
+                    "amount_needed": amount_needed,
+                    "weight_needed": weight_needed,
+                    "machine_assigned": machine_assigned,
+                }
+            )
         task_items.append(item)
 
     return task_items
@@ -1183,7 +1756,7 @@ def daily_report(record_date):
             (selected_date,),
         )
         events = cursor.fetchall()
-    if current_department() == "slitting":
+    if uses_slitting_workflow():
         production = [slitting.enrich(row) for row in production]
         events = [slitting.enrich(row) for row in events]
     return {
@@ -1199,7 +1772,9 @@ def public_display_summary(record_date=None, shift_name=None):
         slot_date, slot_shift = current_production_slot()
         selected_date = date.fromisoformat(record_date) if record_date else slot_date
         selected_shift = str(shift_name or slot_shift).title()
-        allowed_shifts = {"Day", "Night"} if current_department() == "slitting" else {"Day", "Day 08-20", "Day 08-17"}
+        allowed_shifts = (
+            {"Day", "Night"} if uses_slitting_workflow() else {"Day", "Day 08-20", "Day 08-17"}
+        )
         if selected_shift not in allowed_shifts:
             raise ValueError("Choose Day or Night shift.")
     except ValueError as exc:
@@ -1210,8 +1785,8 @@ def public_display_summary(record_date=None, shift_name=None):
             SELECT record_date, shift_name, task_types, task_items, reminders, custom_task, formula_code, amount_needed, machine_assigned, updated_at
             FROM system_import.daily_tasks
             WHERE record_date = %s AND shift_name = %s
-            """
-            , (selected_date, selected_shift)
+            """,
+            (selected_date, selected_shift),
         )
         daily_task = cursor.fetchone()
         cursor.execute(
@@ -1228,15 +1803,13 @@ def public_display_summary(record_date=None, shift_name=None):
             """,
         )
         production = cursor.fetchone()
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT id, record_date, shift_name, formula_code, machine_code,
                    batch_number, actual_quantity
             FROM system_import.production_records
             WHERE qualified_pending = TRUE
             ORDER BY record_date, created_at, id
-            """
-        )
+            """)
         pending_qualifications = cursor.fetchall()
         cursor.execute(
             """
@@ -1280,16 +1853,14 @@ def public_display_summary(record_date=None, shift_name=None):
             (selected_date,),
         )
         event_tracker = cursor.fetchall()
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT id, event_date, start_time, shift_name, machine_code,
                    event_type, severity,
                    is_resolved, responsible_person, target_finish_date, custom_fields
             FROM system_import.abnormality_reports
             WHERE is_resolved = 'no'
             ORDER BY event_date DESC, start_time DESC, created_at DESC
-            """
-        )
+            """)
         ongoing_events = cursor.fetchall()
         cursor.execute(
             """
@@ -1333,29 +1904,58 @@ def public_display_summary(record_date=None, shift_name=None):
         abnormality_trend_rows = cursor.fetchall()
 
     if daily_task:
-        daily_task["task_items"] = json.loads(daily_task["task_items"] or "null") or _legacy_task_items(daily_task)
+        daily_task["task_items"] = json.loads(
+            daily_task["task_items"] or "null"
+        ) or _legacy_task_items(daily_task)
         daily_task["reminders"] = json.loads(daily_task["reminders"] or "[]")
         daily_task["shift_label"] = production_shift_label(selected_date, selected_shift)
         task_updated = daily_task["updated_at"]
     else:
-        daily_task = {"record_date": selected_date.isoformat(), "shift_name": selected_shift, "shift_label": production_shift_label(selected_date, selected_shift), "task_items": [], "reminders": [], "updated_at": None}
+        daily_task = {
+            "record_date": selected_date.isoformat(),
+            "shift_name": selected_shift,
+            "shift_label": production_shift_label(selected_date, selected_shift),
+            "task_items": [],
+            "reminders": [],
+            "updated_at": None,
+        }
         task_updated = None
     if not production:
-        production = {"record_date": None, "record_count": 0, "planned": 0, "actual": 0, "qualified": 0, "qualified_pending": 0, "latest_production_update": None}
+        production = {
+            "record_date": None,
+            "record_count": 0,
+            "planned": 0,
+            "actual": 0,
+            "qualified": 0,
+            "qualified_pending": 0,
+            "latest_production_update": None,
+        }
 
     for row in machines:
         event_row = event_by_machine.get(row["machine_code"], {})
         row["event_count"] = event_row.get("event_count", 0)
         row["open_count"] = event_row.get("open_count", 0)
-    planned, actual, qualified = (float(production[key] or 0) for key in ("planned", "actual", "qualified"))
+    planned, actual, qualified = (
+        float(production[key] or 0) for key in ("planned", "actual", "qualified")
+    )
     latest = max(
-        (value for value in (task_updated, production["latest_production_update"], events["latest_event_update"]) if value is not None),
+        (
+            value
+            for value in (
+                task_updated,
+                production["latest_production_update"],
+                events["latest_event_update"],
+            )
+            if value is not None
+        ),
         default=None,
     )
-    if current_department() == "slitting":
-        pending_qualifications = [r for r in slitting.summary()['records'] if r.get('qualified_quantity') is None]
+    if uses_slitting_workflow():
+        pending_qualifications = [
+            r for r in slitting.summary()["records"] if r.get("qualified_quantity") is None
+        ]
         for row in pending_qualifications:
-            row['actual_quantity'] = row['input_rolls'] * row['stations']
+            row["actual_quantity"] = row["input_rolls"] * row["stations"]
         ongoing_events = [slitting.enrich(row) for row in ongoing_events]
         weekly_production_details = [slitting.enrich(row) for row in weekly_production_detail_rows]
     else:
@@ -1363,34 +1963,66 @@ def public_display_summary(record_date=None, shift_name=None):
     production_by_date = {row["record_date"]: row for row in production_trend_rows}
     abnormality_by_date = {}
     for row in abnormality_trend_rows:
-        abnormality_by_date.setdefault(row["event_date"], []).append({
-            "type": row["event_type"],
-            "label": row["category_label"],
-            "minutes": float(row["minutes"] or 0),
-        })
+        abnormality_by_date.setdefault(row["event_date"], []).append(
+            {
+                "type": row["event_type"],
+                "label": row["category_label"],
+                "minutes": float(row["minutes"] or 0),
+            }
+        )
     trend_dates = [selected_date - timedelta(days=offset) for offset in range(6, -1, -1)]
-    production_trend = [{"date": day.isoformat(), "planned": float(production_by_date.get(day, {}).get("planned", 0) or 0), "actual": float(production_by_date.get(day, {}).get("actual", 0) or 0), "qualified": float(production_by_date.get(day, {}).get("qualified", 0) or 0), "pending": float(production_by_date.get(day, {}).get("pending", 0) or 0)} for day in trend_dates]
-    abnormality_trend = [{
-        "date": day.isoformat(),
-        "total_minutes": sum(segment["minutes"] for segment in abnormality_by_date.get(day, [])),
-        "categories": abnormality_by_date.get(day, []),
-    } for day in trend_dates]
+    production_trend = [
+        {
+            "date": day.isoformat(),
+            "planned": float(production_by_date.get(day, {}).get("planned", 0) or 0),
+            "actual": float(production_by_date.get(day, {}).get("actual", 0) or 0),
+            "qualified": float(production_by_date.get(day, {}).get("qualified", 0) or 0),
+            "pending": float(production_by_date.get(day, {}).get("pending", 0) or 0),
+        }
+        for day in trend_dates
+    ]
+    abnormality_trend = [
+        {
+            "date": day.isoformat(),
+            "total_minutes": sum(
+                segment["minutes"] for segment in abnormality_by_date.get(day, [])
+            ),
+            "categories": abnormality_by_date.get(day, []),
+        }
+        for day in trend_dates
+    ]
     return {
         "display_date": selected_date.isoformat(),
         "daily_task": _json_safe_rows([daily_task])[0],
         "production": {
-            "record_date": production["record_date"].isoformat() if production["record_date"] else None,
-            "record_count": production["record_count"], "planned": planned, "actual": actual,
+            "record_date": (
+                production["record_date"].isoformat() if production["record_date"] else None
+            ),
+            "record_count": production["record_count"],
+            "planned": planned,
+            "actual": actual,
             "achievement_rate": round(actual / planned, 4) if planned else None,
-            "qualified_rate": round(qualified / actual, 4) if actual and not production["qualified_pending"] else None,
+            "qualified_rate": (
+                round(qualified / actual, 4)
+                if actual and not production["qualified_pending"]
+                else None
+            ),
             "qualified_pending": int(production["qualified_pending"] or 0),
         },
         "pending_qualifications": _json_safe_rows(pending_qualifications),
-        "events": {"total": events["total"], "open": int(events["open_events"] or 0), "resolved": int(events["resolved_events"] or 0)},
+        "events": {
+            "total": events["total"],
+            "open": int(events["open_events"] or 0),
+            "resolved": int(events["resolved_events"] or 0),
+        },
         "machines": _json_safe_rows(machines),
         "event_tracker": _json_safe_rows(event_tracker),
         "ongoing_events": _json_safe_rows(ongoing_events),
-        "trends": {"production": production_trend, "abnormalities": abnormality_trend, "production_details": _json_safe_rows(weekly_production_details)},
+        "trends": {
+            "production": production_trend,
+            "abnormalities": abnormality_trend,
+            "production_details": _json_safe_rows(weekly_production_details),
+        },
         "display_settings": get_display_settings(),
         "last_updated": latest.isoformat(sep=" ", timespec="seconds") if latest else None,
     }
@@ -1398,7 +2030,9 @@ def public_display_summary(record_date=None, shift_name=None):
 
 def manager_get_record(record_type, record_id):
     """Return one operational record for a manager-only correction screen."""
-    table = {"production": "production_records", "abnormality": "abnormality_reports"}.get(record_type)
+    table = {"production": "production_records", "abnormality": "abnormality_reports"}.get(
+        record_type
+    )
     if not table:
         raise ValueError("Unknown record type.")
     with transaction() as cursor:
@@ -1406,7 +2040,7 @@ def manager_get_record(record_type, record_id):
         row = cursor.fetchone()
     if not row:
         raise ValueError("Record not found.")
-    if current_department() == "slitting":
+    if uses_slitting_workflow():
         row = slitting.enrich(row)
     return _json_safe_rows([row])[0]
 
@@ -1417,13 +2051,20 @@ def _manager_completion_values(existing, payload):
     if requested_status not in {"yes", "no"}:
         raise ValueError("Resolved status must be yes or no.")
 
-    actual_finish_date = payload.get("actual_finish_date") or existing.get("actual_finish_date") or None
-    solution_provided = str(payload.get("solution_provided") or existing.get("solution_provided") or "").strip()
+    actual_finish_date = (
+        payload.get("actual_finish_date") or existing.get("actual_finish_date") or None
+    )
+    solution_provided = str(
+        payload.get("solution_provided") or existing.get("solution_provided") or ""
+    ).strip()
     has_finish, has_solution = bool(actual_finish_date), bool(solution_provided)
     if has_finish != has_solution:
         raise ValueError("Actual finish date and solution provided must be completed together.")
 
-    was_resolved = str(existing.get("is_resolved", "no")).lower() == "yes" or existing.get("state") == "resolved"
+    was_resolved = (
+        str(existing.get("is_resolved", "no")).lower() == "yes"
+        or existing.get("state") == "resolved"
+    )
     if has_finish and has_solution:
         requested_status = "yes"
     elif requested_status == "yes" and not was_resolved:
@@ -1441,46 +2082,86 @@ def manager_update_record(
 ):
     """Correct a record while retaining its original date and audit history."""
     existing = manager_get_record(record_type, record_id)
-    if current_department() == "slitting":
-        payload = slitting.normalise_production(payload, existing) if record_type == "production" else slitting.normalise_abnormality(payload, existing)
+    if uses_slitting_workflow():
+        payload = (
+            slitting.normalise_production(payload, existing)
+            if record_type == "production"
+            else slitting.normalise_abnormality(payload, existing)
+        )
     with transaction() as cursor:
         if record_type == "production":
             planned = float(payload.get("planned_quantity", existing["planned_quantity"]))
             actual = float(payload.get("actual_quantity", existing["actual_quantity"]))
             raw_qualified = str(payload.get("qualified_quantity", "")).strip()
             qualified = float(raw_qualified) if raw_qualified else None
-            if planned < 0 or actual < 0 or (qualified is not None and (qualified < 0 or qualified > actual)):
+            if (
+                planned < 0
+                or actual < 0
+                or (qualified is not None and (qualified < 0 or qualified > actual))
+            ):
                 raise ValueError("Production quantities are invalid.")
-            cursor.execute("""UPDATE system_import.production_records SET shift_name=%s, machine_code=%s, formula_code=%s, batch_number=%s,
+            cursor.execute(
+                """UPDATE system_import.production_records SET shift_name=%s, machine_code=%s, formula_code=%s, batch_number=%s,
                 planned_quantity=%s, actual_quantity=%s, qualified_quantity=%s, qualified_pending=%s, notes=%s,
-                achievement_rate=%s, qualified_rate=%s, row_version=row_version+1 WHERE id=%s""", (
-                payload.get("shift_name", existing["shift_name"]), payload.get("machine_code", existing["machine_code"]),
-                payload.get("formula_code", existing["formula_code"]), payload.get("batch_number", existing["batch_number"]), planned, actual,
-                qualified, qualified is None, payload.get("notes", existing.get("notes") or ""), actual / planned if planned else None,
-                qualified / actual if qualified is not None and actual else None, record_id))
+                achievement_rate=%s, qualified_rate=%s, row_version=row_version+1 WHERE id=%s""",
+                (
+                    payload.get("shift_name", existing["shift_name"]),
+                    payload.get("machine_code", existing["machine_code"]),
+                    payload.get("formula_code", existing["formula_code"]),
+                    payload.get("batch_number", existing["batch_number"]),
+                    planned,
+                    actual,
+                    qualified,
+                    qualified is None,
+                    payload.get("notes", existing.get("notes") or ""),
+                    actual / planned if planned else None,
+                    qualified / actual if qualified is not None and actual else None,
+                    record_id,
+                ),
+            )
         elif record_type == "abnormality":
             severity = str(payload.get("severity", existing["severity"])).lower()
             if severity not in {"normal", "low", "medium", "high"}:
                 raise ValueError("Choose a valid severity or priority.")
-            actual_finish_date, solution_provided, is_resolved = _manager_completion_values(existing, payload)
+            actual_finish_date, solution_provided, is_resolved = _manager_completion_values(
+                existing, payload
+            )
             if actual_finish_date and str(actual_finish_date) < str(existing["event_date"]):
                 raise ValueError("Actual finish date cannot be earlier than the event date.")
-            cursor.execute("""UPDATE system_import.abnormality_reports SET start_time=%s, end_time=%s, shift_name=%s, machine_code=%s,
+            cursor.execute(
+                """UPDATE system_import.abnormality_reports SET start_time=%s, end_time=%s, shift_name=%s, machine_code=%s,
                 machine_type=%s, event_type=%s, severity=%s, duration_minutes=%s, description=%s, immediate_action=%s,
                 responsible_person=%s, target_finish_date=%s, actual_finish_date=%s, solution_provided=%s,
-                effective_time_cost=%s, is_resolved=%s, state=%s, row_version=row_version+1 WHERE id=%s""", (
-                payload.get("start_time") or None, payload.get("end_time") or None, payload.get("shift_name", existing["shift_name"]),
-                payload.get("machine_code", existing["machine_code"]), payload.get("machine_type", existing["machine_type"]),
-                payload.get("event_type", existing["event_type"]), severity, int(payload.get("duration_minutes", existing["duration_minutes"])),
-                payload.get("description", existing.get("description") or ""), payload.get("immediate_action", existing.get("immediate_action") or ""),
-                payload.get("responsible_person", existing.get("responsible_person") or ""), payload.get("target_finish_date") or None,
-                actual_finish_date, solution_provided,
-                payload.get("effective_time_cost") or None, is_resolved, "resolved" if is_resolved == "yes" else "open", record_id))
+                effective_time_cost=%s, is_resolved=%s, state=%s, row_version=row_version+1 WHERE id=%s""",
+                (
+                    payload.get("start_time") or None,
+                    payload.get("end_time") or None,
+                    payload.get("shift_name", existing["shift_name"]),
+                    payload.get("machine_code", existing["machine_code"]),
+                    payload.get("machine_type", existing["machine_type"]),
+                    payload.get("event_type", existing["event_type"]),
+                    severity,
+                    int(payload.get("duration_minutes", existing["duration_minutes"])),
+                    payload.get("description", existing.get("description") or ""),
+                    payload.get("immediate_action", existing.get("immediate_action") or ""),
+                    payload.get("responsible_person", existing.get("responsible_person") or ""),
+                    payload.get("target_finish_date") or None,
+                    actual_finish_date,
+                    solution_provided,
+                    payload.get("effective_time_cost") or None,
+                    is_resolved,
+                    "resolved" if is_resolved == "yes" else "open",
+                    record_id,
+                ),
+            )
         else:
             raise ValueError("Unknown record type.")
-        if current_department() == "slitting":
-            table = 'production_records' if record_type == 'production' else 'abnormality_reports'
-            cursor.execute(f"UPDATE system_import.{table} SET custom_fields=%s WHERE id=%s", (json.dumps(payload['custom_fields']),record_id))
+        if uses_slitting_workflow():
+            table = "production_records" if record_type == "production" else "abnormality_reports"
+            cursor.execute(
+                f"UPDATE system_import.{table} SET custom_fields=%s WHERE id=%s",
+                (json.dumps(payload["custom_fields"]), record_id),
+            )
         _audit(
             cursor,
             actor_id,

@@ -1,35 +1,35 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#06233f">
-  <title>GNEM Slurry Production Details</title>
-  <link rel="stylesheet" href="/static/display.css?v=20260921-four-block-grid">
-</head>
-<body>
-  <main class="display-shell">
-    <header class="display-head">
-      <div><span id="display-brand-title">GNEM SLURRY PRODUCTION DETAILS / GNEM 制浆生产明细</span><h1 id="display-brand-subtitle">Daily Factory Display / 每日工厂看板</h1></div>
-      <div class="display-date"><strong id="display-date">—</strong><small id="last-updated">Loading / 加载中</small></div>
-    </header>
-    <section class="display-layout">
-      <section class="display-section task-section" data-display-block="task">
-        <div class="section-head"><h2 data-block-title>Today's task / 今日任务</h2><span>Today only / 仅当日</span></div>
-        <div id="task-details" class="display-task-list"></div>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#06233f">
+    <title>GNEM Slurry Production Details</title>
+    <link rel="stylesheet" href="/static/display.css?v=20260921-four-block-grid">
+  </head>
+  <body>
+    <main class="display-shell">
+      <header class="display-head">
+        <div><span id="display-brand-title">GNEM SLURRY PRODUCTION DETAILS / GNEM 制浆生产明细</span><h1 id="display-brand-subtitle">Daily Factory Display / 每日工厂看板</h1></div>
+        <div class="display-date"><strong id="display-date">—</strong><small id="last-updated">Loading / 加载中</small></div>
+      </header>
+      <section class="display-layout">
+        <section class="display-section task-section" data-display-block="task">
+          <div class="section-head"><h2 data-block-title>Today's task / 今日任务</h2><span>Today only / 仅当日</span></div>
+          <div id="task-details" class="display-task-list"></div>
+        </section>
+        <article class="display-section rate-card production-rates-card" data-display-block="rates"><div class="section-head"><h2 data-block-title>Production rates / 生产率</h2></div><div class="rate-pair"><div><small>Achievement Rate / 达成率</small><strong id="achievement-rate">—</strong></div><div><small>Qualified Rate / 合格率</small><strong id="qualified-rate">—</strong></div></div><small id="achievement-note" hidden></small><small id="qualified-note" hidden></small></article>
+        <section class="display-section pending-qualification-section" data-display-block="pending_qualification"><div class="section-head"><h2 data-block-title>Pending qualification data / 待补录合格数据</h2><span>Follow-up required / 需要跟进</span></div><div id="pending-qualifications" class="pending-qualification-list"></div></section>
+        <section class="display-section ongoing-section" data-display-block="ongoing">
+          <div class="section-head"><h2 data-block-title>Ongoing abnormalities / 进行中异常</h2><span>Requires follow-up / 需跟进</span></div>
+          <div id="ongoing-events" class="ongoing-list"></div>
+        </section>
+        <section class="display-section reminder-section" data-display-block="reminders"><div class="section-head"><h2 data-block-title>Reminders / 提醒事项</h2></div><div id="display-reminders" class="display-reminder-list"></div></section>
+        <section class="display-section trend-section production-trend-section" data-display-block="production_trend"><div class="section-head"><h2 data-block-title>7-day production / 7日生产趋势</h2></div><div id="production-trend-chart" class="display-chart"></div></section>
+        <section class="display-section trend-section abnormality-trend-section" data-display-block="abnormality_trend"><div class="section-head"><h2 data-block-title>Abnormal downtime by date / 每日异常停机</h2></div><p class="chart-note">Abnormality records only; cleaning and normal production excluded. / 仅统计异常记录，不含清洁及正常生产。</p><div id="abnormality-trend-chart" class="display-chart"></div></section>
       </section>
-      <article class="display-section rate-card production-rates-card" data-display-block="rates"><div class="section-head"><h2 data-block-title>Production rates / 生产率</h2></div><div class="rate-pair"><div><small>Achievement Rate / 达成率</small><strong id="achievement-rate">—</strong></div><div><small>Qualified Rate / 合格率</small><strong id="qualified-rate">—</strong></div></div><small id="achievement-note" hidden></small><small id="qualified-note" hidden></small></article>
-      <section class="display-section pending-qualification-section" data-display-block="pending_qualification"><div class="section-head"><h2 data-block-title>Pending qualification data / 待补录合格数据</h2><span>Follow-up required / 需要跟进</span></div><div id="pending-qualifications" class="pending-qualification-list"></div></section>
-      <section class="display-section ongoing-section" data-display-block="ongoing">
-        <div class="section-head"><h2 data-block-title>Ongoing abnormalities / 进行中异常</h2><span>Requires follow-up / 需跟进</span></div>
-        <div id="ongoing-events" class="ongoing-list"></div>
-      </section>
-      <section class="display-section reminder-section" data-display-block="reminders"><div class="section-head"><h2 data-block-title>Reminders / 提醒事项</h2></div><div id="display-reminders" class="display-reminder-list"></div></section>
-      <section class="display-section trend-section production-trend-section" data-display-block="production_trend"><div class="section-head"><h2 data-block-title>7-day production / 7日生产趋势</h2></div><div id="production-trend-chart" class="display-chart"></div></section>
-      <section class="display-section trend-section abnormality-trend-section" data-display-block="abnormality_trend"><div class="section-head"><h2 data-block-title>Abnormal downtime by date / 每日异常停机</h2></div><p class="chart-note">Abnormality records only; cleaning and normal production excluded. / 仅统计异常记录，不含清洁及正常生产。</p><div id="abnormality-trend-chart" class="display-chart"></div></section>
-    </section>
-    <footer>Read-only factory display / 只读工厂展示屏 · Detailed records are entered in GNEM / 详细记录请在 GNEM 系统中录入</footer>
-  </main>
-  <script src="/static/display.js?v=20260921-empty-status-messages"></script>
-</body>
+      <footer>Read-only factory display / 只读工厂展示屏 · Detailed records are entered in GNEM / 详细记录请在 GNEM 系统中录入</footer>
+    </main>
+    <script src="/static/display.js?v=20260921-empty-status-messages"></script>
+  </body>
 </html>

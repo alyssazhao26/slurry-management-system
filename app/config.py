@@ -13,10 +13,16 @@ load_dotenv(ROOT / ".env.departments", override=True)
 class Config:
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     DEPLOYMENT_MODE = os.getenv("DEPLOYMENT_MODE", "single_server")
-    SECRET_KEY = os.environ["SECRET_KEY"] if ENVIRONMENT == "production" else os.getenv("SECRET_KEY", "development-only-change-me")
+    SECRET_KEY = (
+        os.environ["SECRET_KEY"]
+        if ENVIRONMENT == "production"
+        else os.getenv("SECRET_KEY", "development-only-change-me")
+    )
     DB = {
-        "host": os.getenv("DB_HOST", "127.0.0.1"), "port": int(os.getenv("DB_PORT", "3306")),
-        "database": os.getenv("DB_NAME", "slurry_management"), "user": os.getenv("DB_USER", "slurry_app"),
+        "host": os.getenv("DB_HOST", "127.0.0.1"),
+        "port": int(os.getenv("DB_PORT", "3306")),
+        "database": os.getenv("DB_NAME", "slurry_management"),
+        "user": os.getenv("DB_USER", "slurry_app"),
         "password": os.getenv("DB_PASSWORD", ""),
     }
     # Optional TLS: configure MySQL with a server certificate, then provide its CA here.
@@ -25,12 +31,23 @@ class Config:
         DB["ssl_verify_cert"] = os.getenv("DB_SSL_VERIFY_CERT", "true").lower() == "true"
     IMPORT_SCHEMA = os.getenv("IMPORT_SCHEMA", "system_import")
     SLITTING_IMPORT_SCHEMA = os.getenv("SLITTING_IMPORT_SCHEMA", "slitting_system_import")
-    SLITTING_DB = {**DB, "database": os.getenv("SLITTING_DB_NAME", "slitting_management"),
-                   "user": os.getenv("SLITTING_DB_USER", DB["user"]),
-                   "password": os.getenv("SLITTING_DB_PASSWORD", DB["password"])}
+    SLITTING_DB = {
+        **DB,
+        "database": os.getenv("SLITTING_DB_NAME", "slitting_management"),
+        "user": os.getenv("SLITTING_DB_USER", DB["user"]),
+        "password": os.getenv("SLITTING_DB_PASSWORD", DB["password"]),
+    }
+    # Coating is currently a branded placeholder backed by the live Slitting
+    # dataset. Both views intentionally share reads and writes.
+    COATING_IMPORT_SCHEMA = SLITTING_IMPORT_SCHEMA
+    COATING_DB = SLITTING_DB
     QR_PUBLIC_BASE_URL = os.getenv("QR_PUBLIC_BASE_URL", "").rstrip("/")
     LOW_YIELD_THRESHOLD = float(os.getenv("LOW_YIELD_THRESHOLD", "0.90"))
-    MANAGER_PIN = os.environ["MANAGER_PIN"] if ENVIRONMENT == "production" else os.getenv("MANAGER_PIN", "manager-demo-pin-change-me")
+    MANAGER_PIN = (
+        os.environ["MANAGER_PIN"]
+        if ENVIRONMENT == "production"
+        else os.getenv("MANAGER_PIN", "manager-demo-pin-change-me")
+    )
     SYNC_BATCH_LIMIT = int(os.getenv("SYNC_BATCH_LIMIT", "100"))
     DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "12"))
     RECORDS_PAGE_SIZE = int(os.getenv("RECORDS_PAGE_SIZE", "50"))
@@ -41,7 +58,11 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = ENVIRONMENT == "production"
     PERMANENT_SESSION_LIFETIME = 60 * 60 * 8
-    ALLOWED_HOSTS = {host.strip().lower() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if host.strip()}
+    ALLOWED_HOSTS = {
+        host.strip().lower()
+        for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+        if host.strip()
+    }
     BEHIND_TLS_PROXY = os.getenv("BEHIND_TLS_PROXY", "false").lower() == "true"
     WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
     WEB_PORT = int(os.getenv("WEB_PORT", "5000"))
@@ -66,13 +87,24 @@ class Config:
         if not cls.MANAGER_PIN or cls.MANAGER_PIN == "manager-demo-pin-change-me":
             raise RuntimeError("MANAGER_PIN must be changed in production.")
         if cls.ALLOWED_HOSTS <= {"localhost", "127.0.0.1"}:
-            raise RuntimeError("Set ALLOWED_HOSTS to the employee server's private DNS name or IP address.")
+            raise RuntimeError(
+                "Set ALLOWED_HOSTS to the employee server's private DNS name or IP address."
+            )
         if not cls.BEHIND_TLS_PROXY:
-            raise RuntimeError("Production requires HTTPS through a TLS reverse proxy (set BEHIND_TLS_PROXY=true after configuring it).")
+            raise RuntimeError(
+                "Production requires HTTPS through a TLS reverse proxy (set BEHIND_TLS_PROXY=true after configuring it)."
+            )
         if cls.DISPLAY_HTTP_PORT == cls.WEB_PORT and (
-            cls.DISPLAY_HTTP_HOST in {"0.0.0.0", "::"}
-            or cls.DISPLAY_HTTP_HOST == cls.WEB_HOST
+            cls.DISPLAY_HTTP_HOST in {"0.0.0.0", "::"} or cls.DISPLAY_HTTP_HOST == cls.WEB_HOST
         ):
-            raise RuntimeError("The HTTP display and HTTPS backend may share a port only when they bind to different specific IP addresses.")
-        if cls.DEPLOYMENT_MODE == "single_server" and cls.DB["host"].lower() not in {"127.0.0.1", "localhost", "::1"}:
-            raise RuntimeError("Single-server mode requires DB_HOST to be local (127.0.0.1 or localhost).")
+            raise RuntimeError(
+                "The HTTP display and HTTPS backend may share a port only when they bind to different specific IP addresses."
+            )
+        if cls.DEPLOYMENT_MODE == "single_server" and cls.DB["host"].lower() not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
+            raise RuntimeError(
+                "Single-server mode requires DB_HOST to be local (127.0.0.1 or localhost)."
+            )
