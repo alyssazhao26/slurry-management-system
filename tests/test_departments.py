@@ -425,12 +425,12 @@ def test_slitting_category_deactivation_requires_manager_and_slitting_department
     assert calls == [(request_data["json"], 9)]
 
 
-def test_edit_requires_manager(monkeypatch):
+def test_manager_record_endpoint_stays_protected(monkeypatch):
     client = app_for_test(monkeypatch).test_client()
     assert client.get("/api/manager/records/production/1").status_code == 403
 
 
-def test_employee_can_edit_event_but_not_use_manager_production_edit(monkeypatch):
+def test_employee_can_edit_production_and_event_records(monkeypatch):
     app = app_for_test(monkeypatch)
     client = app.test_client()
     saved = []
@@ -466,6 +466,26 @@ def test_employee_can_edit_event_but_not_use_manager_production_edit(monkeypatch
             {"audit_action": "employee_edited"},
         )
     ]
+
+    for department in ("slurry", "slitting"):
+        response = client.get(f"/api/production-records/9?department={department}")
+        assert response.status_code == 200
+        assert response.json["record"]["id"] == 9
+
+        response = client.patch(
+            f"/api/production-records/9?department={department}",
+            json={"notes": f"Corrected {department} production record"},
+            headers={"X-CSRF-Token": token},
+        )
+        assert response.status_code == 200
+        assert saved[-1] == (
+            "production",
+            9,
+            {"notes": f"Corrected {department} production record"},
+            {"audit_action": "employee_edited"},
+        )
+
+    # The separate generic manager endpoint remains protected.
     assert client.get("/api/manager/records/production/9").status_code == 403
 
 

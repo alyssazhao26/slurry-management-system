@@ -27,6 +27,19 @@ def _json_safe_rows(rows):
     return rows
 
 
+def _downtime_minutes(start_time, end_time):
+    """Calculate elapsed minutes, treating an earlier end time as the next day."""
+    time_pattern = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+    start = str(start_time or "")[:5]
+    end = str(end_time or "")[:5]
+    if not time_pattern.fullmatch(start) or not time_pattern.fullmatch(end):
+        raise ValueError("Event time must use valid 24-hour values (HH:MM - HH:MM).")
+    start_hour, start_minute = (int(part) for part in start.split(":"))
+    end_hour, end_minute = (int(part) for part in end.split(":"))
+    minutes = end_hour * 60 + end_minute - (start_hour * 60 + start_minute)
+    return minutes if minutes >= 0 else minutes + 24 * 60
+
+
 def _audit(cursor, actor_id, entity_type, entity_id, action, details):
     cursor.execute(
         """
@@ -302,12 +315,7 @@ def create_abnormality(payload, actor_id=None):
     if not description:
         raise ValueError("Describe what happened.")
     payload["description"], payload["immediate_action"] = description, immediate_action
-    time_pattern = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-    if not time_pattern.fullmatch(str(payload.get("start_time", ""))) or not time_pattern.fullmatch(
-        str(payload.get("end_time", ""))
-    ):
-        raise ValueError("Event time must use valid 24-hour values (HH:MM - HH:MM).")
-    duration = int(payload["duration_minutes"])
+    duration = _downtime_minutes(payload.get("start_time"), payload.get("end_time"))
     cost_failure_types = payload.get("cost_failure_types", [])
     if not isinstance(cost_failure_types, list):
         raise ValueError("Cost-failure types must be a list.")
@@ -2128,20 +2136,23 @@ def manager_update_record(
             )
             if actual_finish_date and str(actual_finish_date) < str(existing["event_date"]):
                 raise ValueError("Actual finish date cannot be earlier than the event date.")
+            start_time = payload.get("start_time") or existing.get("start_time")
+            end_time = payload.get("end_time") or existing.get("end_time")
+            duration_minutes = _downtime_minutes(start_time, end_time)
             cursor.execute(
                 """UPDATE system_import.abnormality_reports SET start_time=%s, end_time=%s, shift_name=%s, machine_code=%s,
                 machine_type=%s, event_type=%s, severity=%s, duration_minutes=%s, description=%s, immediate_action=%s,
                 responsible_person=%s, target_finish_date=%s, actual_finish_date=%s, solution_provided=%s,
                 effective_time_cost=%s, is_resolved=%s, state=%s, row_version=row_version+1 WHERE id=%s""",
                 (
-                    payload.get("start_time") or None,
-                    payload.get("end_time") or None,
+                    start_time,
+                    end_time,
                     payload.get("shift_name", existing["shift_name"]),
                     payload.get("machine_code", existing["machine_code"]),
                     payload.get("machine_type", existing["machine_type"]),
                     payload.get("event_type", existing["event_type"]),
                     severity,
-                    int(payload.get("duration_minutes", existing["duration_minutes"])),
+                    duration_minutes,
                     payload.get("description", existing.get("description") or ""),
                     payload.get("immediate_action", existing.get("immediate_action") or ""),
                     payload.get("responsible_person", existing.get("responsible_person") or ""),

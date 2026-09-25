@@ -2230,6 +2230,9 @@ function managerEditControl(key, label, kind, value) {
     'planned_quantity', 'actual_quantity', 'machine_type', 'event_type', 'severity', 'start_time',
     'end_time', 'duration_minutes', 'is_resolved'
   ].includes(key) ? 'required' : '';
+  if (key === 'duration_minutes') {
+    return `<label>${label}<input type="number" value="${safeValue}" data-calculated-downtime disabled aria-disabled="true"><small>Calculated automatically from start and end time. / 根据开始和结束时间自动计算。</small></label>`;
+  }
   if (key === 'event_type') {
     const options = managerEventTypes.map(option =>
       `<option value="${escapeHtml(option.event_value)}" ${String(value) === option.event_value ? 'selected' : ''}>${escapeHtml(option.display_name)}</option>`
@@ -2248,6 +2251,17 @@ function managerEditControl(key, label, kind, value) {
   return `<label>${label}<input name="${key}" type="${kind}" value="${safeValue}" ${kind === 'number' ? 'step="0.01" min="0"' : ''} ${required}></label>`;
 }
 
+function updateRecordDowntime(form) {
+  const output = form.querySelector('[data-calculated-downtime]');
+  if (!output) return;
+  const start = form.elements.start_time?.value;
+  const end = form.elements.end_time?.value;
+  output.value = start && end ? calculateDowntime({
+    start,
+    end
+  }) : '';
+}
+
 function openManagerRecordDialog(type, record = null) {
   if (isSlitting) return openSlittingEditor(type, record);
   managerRecordContext = {
@@ -2259,6 +2273,7 @@ function openManagerRecordDialog(type, record = null) {
     `${isNew ? 'Add' : 'Edit'} ${type === 'production' ? 'production' : 'event'} record / ${isNew ? '添加' : '编辑'}${type === 'production' ? '生产' : '事件'}记录`;
   document.querySelector('#manager-record-edit-fields').innerHTML = managerEditableFields[type].map(
     ([key, label, kind]) => managerEditControl(key, label, kind, record?.[key])).join('');
+  updateRecordDowntime(document.querySelector('#manager-record-edit'));
   document.querySelector('#manager-record-edit-status').textContent = '';
   document.querySelector('#manager-record-dialog').showModal();
 }
@@ -2275,7 +2290,7 @@ document.addEventListener('click', async event => {
   if (type === 'abnormality') await loadEventTypes(true);
   const editPath = type === 'abnormality' ?
     `/api/abnormality-reports/${id}` :
-    `/api/manager/records/${type}/${id}`;
+    `/api/production-records/${id}`;
   const response = await fetch(editPath),
     data = await response.json();
   if (!response.ok) {
@@ -2286,6 +2301,11 @@ document.addEventListener('click', async event => {
 });
 document.querySelector('#close-manager-record-dialog').addEventListener('click', () => document
   .querySelector('#manager-record-dialog').close());
+document.querySelector('#manager-record-edit').addEventListener('input', event => {
+  if (event.target.name === 'start_time' || event.target.name === 'end_time') {
+    updateRecordDowntime(event.currentTarget);
+  }
+});
 document.querySelector('#manager-record-edit').addEventListener('submit', async event => {
   event.preventDefault();
   if (!managerRecordContext) return;
@@ -2301,7 +2321,7 @@ document.querySelector('#manager-record-edit').addEventListener('submit', async 
   const path = editing ?
     managerRecordContext.type === 'abnormality' ?
     `/api/abnormality-reports/${managerRecordContext.id}` :
-    `/api/manager/records/${managerRecordContext.type}/${managerRecordContext.id}` :
+    `/api/production-records/${managerRecordContext.id}` :
     managerRecordContext.type === 'production' ? '/api/production-records' :
     '/api/abnormality-reports';
   const response = await fetch(path, {

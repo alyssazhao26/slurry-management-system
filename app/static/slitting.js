@@ -488,6 +488,7 @@ function openSlittingEditor(type, record = null) {
       record?.[k])).join('');
     categoryControls(document.querySelector('#manager-record-edit'), record);
   }
+  updateRecordDowntime(document.querySelector('#manager-record-edit'));
   document.querySelector('#manager-record-edit-status').textContent = '';
   document.querySelector('#manager-record-dialog').showModal();
 }

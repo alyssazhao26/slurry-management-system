@@ -729,6 +729,30 @@ def production_qualification(record_id):
         return jsonify(error=str(exc)), 400
 
 
+@web.get("/api/production-records/<int:record_id>")
+def production_record(record_id):
+    """Allow operators to load an existing production record for correction."""
+    try:
+        return jsonify(record=manager_get_record("production", record_id))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@web.patch("/api/production-records/<int:record_id>")
+def production_record_update(record_id):
+    """Allow operator production edits; manager-only administration stays protected."""
+    try:
+        record = manager_update_record(
+            "production",
+            record_id,
+            request.get_json() or {},
+            audit_action="employee_edited",
+        )
+        return jsonify(ok=True, record=record)
+    except (TypeError, ValueError) as exc:
+        return jsonify(error=str(exc)), 400
+
+
 @web.post("/api/abnormality-reports")
 def abnormality():
     try:
