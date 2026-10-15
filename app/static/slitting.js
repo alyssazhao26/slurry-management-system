@@ -93,6 +93,26 @@ function qualifiedOutput(stats) {
   return stats.pending ? 'Pending / 待补录' : `${compactNumber(stats.qualified_quantity)} m²`;
 }
 
+function spreadChartLabelYs(points, minimum, maximum, gap = 22) {
+  if (!points.length) return [];
+  const positioned = points
+    .map(point => ({...point, labelY: Math.max(minimum, Math.min(maximum, point.y - 18))}))
+    .sort((a, b) => a.labelY - b.labelY);
+  for (let index = 1; index < positioned.length; index += 1) {
+    positioned[index].labelY = Math.max(positioned[index].labelY,
+      positioned[index - 1].labelY + gap);
+  }
+  const overflow = positioned[positioned.length - 1].labelY - maximum;
+  if (overflow > 0) positioned.forEach(point => { point.labelY -= overflow; });
+  for (let index = positioned.length - 2; index >= 0; index -= 1) {
+    positioned[index].labelY = Math.min(positioned[index].labelY,
+      positioned[index + 1].labelY - gap);
+  }
+  const underflow = minimum - positioned[0].labelY;
+  if (underflow > 0) positioned.forEach(point => { point.labelY += underflow; });
+  return positioned;
+}
+
 function slittingMachineShareCard(machine) {
   const rows = machine.records.map(row =>
     `<div class="share-production-row"><div class="share-model-cell"><span>${escapeHtml(row.shift_name)}</span><strong>${escapeHtml(row.formula_code).replaceAll('/','/<wbr>')}</strong></div><div class="share-roll-value"><strong>${row.planned_rolls}</strong><span>Planned / 计划</span></div><div class="share-roll-value"><strong>${row.input_rolls}</strong><span>Input / 投入</span></div><div class="share-roll-value"><strong>${row.qualified_rolls ?? 'Pending / 待补录'}</strong><span>Qualified rolls / 合格卷数</span></div><div class="share-output-cell"><strong>${compactNumber(row.actual_quantity)} m²</strong><span>Actual output / 实际产出</span></div><div class="share-output-cell qualified"><strong>${row.qualified_quantity == null ? 'Pending / 待补录' : `${compactNumber(row.qualified_quantity)} m²`}</strong><span>Qualified output / 合格产出</span></div></div>`
@@ -152,7 +172,10 @@ function slittingPlanAttainmentComparison(rows, dates, selectedMachine = '') {
   const rates=machines.flatMap(machine=>dates.map(day=>{const cell=values[machine][day];return cell.planned?cell.actual/cell.planned:null}).filter(value=>value!=null)),
     maximum=Math.max(1.1,...rates),x=index=>left+index/Math.max(1,dates.length-1)*plotWidth,y=value=>top+plotHeight-value/maximum*plotHeight,
     grid=[0,.5,1,maximum].map(rate=>`<g><line x1="${left}" y1="${y(rate)}" x2="${width-right}" y2="${y(rate)}" class="slitting-trend-grid"/><text x="${left-8}" y="${y(rate)+4}" text-anchor="end">${Math.round(rate*100)}%</text></g>`).join(''),
-    lines=machines.map((machine,index)=>{const points=dates.map((day,dateIndex)=>{const cell=values[machine][day];return cell.planned?`${x(dateIndex)},${y(cell.actual/cell.planned)}`:null}).filter(Boolean).join(' ');return `<polyline points="${points}" fill="none" stroke="${palette[index%palette.length]}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>`}).join(''),
+    series=machines.map((machine,index)=>({machine,index,color:palette[index%palette.length],points:dates.map((day,dateIndex)=>{const cell=values[machine][day],rate=cell.planned?cell.actual/cell.planned:null;return {seriesIndex:index,dateIndex,rate,x:x(dateIndex),y:rate==null?null:y(rate)}})})),
+    labelPositions=new Map();
+  dates.forEach((day,dateIndex)=>spreadChartLabelYs(series.map(item=>item.points[dateIndex]).filter(point=>point.rate!=null),top+12,top+plotHeight-12).forEach(point=>labelPositions.set(`${point.seriesIndex}:${dateIndex}`,point.labelY)));
+  const lines=series.map(item=>{const visible=item.points.filter(point=>point.rate!=null),points=visible.map(point=>`${point.x},${point.y}`).join(' '),labels=visible.map(point=>{const labelY=labelPositions.get(`${point.seriesIndex}:${point.dateIndex}`);return `<line x1="${point.x}" y1="${point.y}" x2="${point.x}" y2="${labelY}" stroke="${item.color}" stroke-width="1" opacity=".65"/><circle cx="${point.x}" cy="${point.y}" r="4" fill="${item.color}"/><rect x="${point.x-21}" y="${labelY-10}" width="42" height="19" rx="6" fill="${item.color}"/><text x="${point.x}" y="${labelY+4}" text-anchor="middle" style="fill:#fff;font-size:11px;font-weight:900">${Math.round(point.rate*100)}%</text>`}).join('');return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>${labels}`}).join(''),
     legend=machines.map((machine,index)=>`<span><i style="background:${palette[index%palette.length]}"></i>${escapeHtml(machine)}</span>`).join(''),
     ticks=dates.map((day,index)=>`<text x="${x(index)}" y="${height-10}" text-anchor="middle">${escapeHtml(day.slice(5))}</text>`).join('');
   return `<article class="slitting-comparison-card"><h3>Seven-day plan attainment by machine / 近七天各机台计划达成率</h3><div class="slitting-four-week-legend">${legend}</div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Seven-day plan attainment by machine">${grid}${lines}${ticks}</svg></article>`;
@@ -412,11 +435,15 @@ async function saveSlittingReportImage(download = true) {
   } else {
     const trendColors = ['#168a85', '#4f8fbd', '#d46b5f', '#d49a35', '#7b68ad', '#6f8794'];
     const chartDates=report.trendDates.slice(-7),chartLeft=margin+58,chartRight=width-margin-24,chartTop=y+48,chartBottom=y+250,
-      series=trendMachineNames.map((machine,index)=>({machine,color:trendColors[index%trendColors.length],values:chartDates.map(day=>{const rows=(report.productionTrends||[]).filter(row=>row.machine_code===machine&&row.record_date===day);const planned=rows.reduce((sum,row)=>sum+Number(row.planned_quantity||0),0);return planned?rows.reduce((sum,row)=>sum+Number(row.actual_quantity||0),0)/planned:null})})),
-      maximum=Math.max(1.1,...series.flatMap(item=>item.values.filter(value=>value!=null)));
+      series=trendMachineNames.map((machine,index)=>({machine,index,color:trendColors[index%trendColors.length],values:chartDates.map(day=>{const rows=(report.productionTrends||[]).filter(row=>row.machine_code===machine&&row.record_date===day);const planned=rows.reduce((sum,row)=>sum+Number(row.planned_quantity||0),0);return planned?rows.reduce((sum,row)=>sum+Number(row.actual_quantity||0),0)/planned:null})})),
+      maximum=Math.max(1.1,...series.flatMap(item=>item.values.filter(value=>value!=null))),labelPositions=new Map();
+    chartDates.forEach((day,dateIndex)=>spreadChartLabelYs(series.map(item=>{const value=item.values[dateIndex];return value==null?null:{seriesIndex:item.index,dateIndex,y:chartBottom-value/maximum*(chartBottom-chartTop)}}).filter(Boolean),chartTop+12,chartBottom-12).forEach(point=>labelPositions.set(`${point.seriesIndex}:${dateIndex}`,point.labelY)));
     canvasRoundedRect(context,margin,y,width-margin*2,280,9,'#ffffff','#b9ced8');
-    series.forEach((item,index)=>{context.fillStyle=item.color;context.fillRect(margin+18+index*150,y+15,12,12);canvasText(context,item.machine,margin+36+index*150,y+12,{size:12,weight:700});context.strokeStyle=item.color;context.lineWidth=3;context.beginPath();let started=false;item.values.forEach((value,dateIndex)=>{if(value==null)return;const pointX=chartLeft+dateIndex/Math.max(1,chartDates.length-1)*(chartRight-chartLeft),pointY=chartBottom-value/maximum*(chartBottom-chartTop);if(!started){context.moveTo(pointX,pointY);started=true}else context.lineTo(pointX,pointY)});context.stroke();const finalIndex=item.values.map((value,i)=>value==null?-1:i).filter(i=>i>=0).pop();if(finalIndex!=null){const value=item.values[finalIndex],pointX=chartLeft+finalIndex/Math.max(1,chartDates.length-1)*(chartRight-chartLeft),pointY=chartBottom-value/maximum*(chartBottom-chartTop);context.beginPath();context.arc(pointX,pointY,4,0,Math.PI*2);context.fillStyle=item.color;context.fill();canvasText(context,`${Math.round(value*100)}%`,pointX-7,pointY-16-index*13,{size:12,weight:900,color:item.color,align:'right'})}});
-    canvasText(context,'6 days ago / 六天前',chartLeft,chartBottom+10,{size:10,color:'#657985'});canvasText(context,'Report date / 报告日',chartRight,chartBottom+10,{size:10,color:'#657985',align:'right'});
+    series.forEach((item,index)=>{context.fillStyle=item.color;context.fillRect(margin+18+index*150,y+15,12,12);canvasText(context,item.machine,margin+36+index*150,y+12,{size:12,weight:700});context.strokeStyle=item.color;context.lineWidth=3;context.beginPath();let started=false;item.values.forEach((value,dateIndex)=>{if(value==null)return;const pointX=chartLeft+dateIndex/Math.max(1,chartDates.length-1)*(chartRight-chartLeft),pointY=chartBottom-value/maximum*(chartBottom-chartTop);if(!started){context.moveTo(pointX,pointY);started=true}else context.lineTo(pointX,pointY)});context.stroke();item.values.forEach((value,dateIndex)=>{if(value==null)return;const pointX=chartLeft+dateIndex/Math.max(1,chartDates.length-1)*(chartRight-chartLeft),pointY=chartBottom-value/maximum*(chartBottom-chartTop),labelY=labelPositions.get(`${item.index}:${dateIndex}`);context.strokeStyle=item.color;context.lineWidth=1;context.beginPath();context.moveTo(pointX,pointY);context.lineTo(pointX,labelY);context.stroke();context.beginPath();context.arc(pointX,pointY,4,0,Math.PI*2);context.fillStyle=item.color;context.fill();canvasRoundedRect(context,pointX-20,labelY-9,40,18,5,item.color);canvasText(context,`${Math.round(value*100)}%`,pointX,labelY-6,{size:9,weight:900,color:'#ffffff',align:'center'})})});
+    chartDates.forEach((day,dateIndex)=>{
+      const pointX=chartLeft+dateIndex/Math.max(1,chartDates.length-1)*(chartRight-chartLeft);
+      canvasText(context,day.slice(5),pointX,chartBottom+10,{size:10,color:'#526977',align:'center'});
+    });
     y += 296;
   }
   canvasText(context,'Cumulative abnormality pivot (minutes) / 累计异常透视表（分钟）',margin,y+4,{size:22,weight:800,color:'#063b5c'});y+=38;

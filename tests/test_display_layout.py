@@ -164,7 +164,7 @@ def test_slitting_training_is_rendered_on_management_dashboard():
     assert "item.type === 'slitting_training'" in app_js
     assert "Training / 培训" in app_js
     assert "app.js?v=20261015-ineffective-cost" in dashboard
-    assert "slitting.js?v=20261015-report-pdf" in dashboard
+    assert "slitting.js?v=20261015-collision-labels" in dashboard
     assert "select-all-event-columns" in dashboard
     assert "display-abnormality-types" in dashboard
     assert "abnormality_chart_types" in app_js
@@ -260,6 +260,14 @@ def test_slitting_report_compares_machine_attainment_and_uses_abnormality_pivot(
     assert "Seven-day plan attainment by machine" in source
     assert "dates = dates.slice(-7)" in source
     assert "chartDates.length-1" in source
+    assert "chartDates.forEach((day,dateIndex)=>" in source
+    assert "day.slice(5)" in source
+    assert "6 days ago / 六天前" not in source
+    assert "Math.round(point.rate*100)" in source
+    assert "item.values.forEach((value,dateIndex)=>" in source
+    assert "function spreadChartLabelYs" in source
+    assert "labelPositions=new Map()" in source
+    assert "canvasRoundedRect(context,pointX-20,labelY-9,40,18" in source
     assert "DATE_SUB(%s, INTERVAL 27 DAY)" in service
     assert '"abnormality_trends"' in service
     assert '"production_trends"' in service
