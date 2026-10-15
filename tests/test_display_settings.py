@@ -61,6 +61,25 @@ def test_display_sizes_snap_to_supported_grid(monkeypatch):
     assert saved["blocks"][0]["height"] == 1
 
 
+def test_abnormality_chart_type_selection_is_persisted(monkeypatch):
+    cursor = FakeCursor()
+
+    @contextmanager
+    def fake_transaction():
+        yield cursor
+
+    monkeypatch.setattr(records, "transaction", fake_transaction)
+    settings = records.default_display_settings()
+    settings["abnormality_chart_types"] = ["Quality Event", "Equipment Event"]
+
+    saved = records.save_display_settings(settings)
+
+    assert saved["abnormality_chart_types"] == ["Quality Event", "Equipment Event"]
+    assert saved["abnormality_chart_types_configured"] is True
+    persisted = json.loads(cursor.calls[0][1][0])
+    assert persisted["abnormality_chart_types"] == ["Quality Event", "Equipment Event"]
+
+
 def test_pending_qualification_block_is_a_visible_one_by_one_default():
     block = next(
         item

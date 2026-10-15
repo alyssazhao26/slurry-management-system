@@ -1,5 +1,6 @@
 import secrets
 import io
+import re
 from functools import lru_cache, wraps
 from hmac import compare_digest
 from time import monotonic, time
@@ -14,11 +15,13 @@ from flask import (
     send_file,
 )
 import qrcode
+from PIL import Image, UnidentifiedImageError
 
 from .services.records import (
     create_abnormality,
     create_production,
     daily_report,
+    data_export_columns,
     deactivate_cost_failure_type,
     deactivate_event_type,
     get_cost_failure_types,
@@ -28,6 +31,8 @@ from .services.records import (
     get_field_definitions,
     get_standard_field_settings,
     list_records,
+    prepare_data_export,
+    export_data_workbook,
     manager_get_record,
     manager_update_record,
     manager_dashboard,
@@ -37,6 +42,7 @@ from .services.records import (
     save_display_settings,
     save_field_definition,
     save_standard_field_setting,
+    reset_standard_field_setting,
     save_daily_task,
     update_production_qualification,
     update_tracker,
@@ -62,6 +68,7 @@ from .services.inventory import (
     check_out_product,
     get_product_by_token,
     inventory_summary,
+    inventory_scan_url,
     make_qr_png,
     register_product,
     register_small_roll,
@@ -472,7 +479,14 @@ def create_inventory_small_roll(product_id):
 
 @web.get("/api/inventory/products/<int:product_id>/qr.png")
 def inventory_product_qr(product_id):
-    with_url = current_app.config["QR_PUBLIC_BASE_URL"] or request.url_root.rstrip("/")
+    display_host = current_app.config["DISPLAY_HTTP_HOST"]
+    if display_host in {"0.0.0.0", "::", "127.0.0.1", "localhost"}:
+        display_host = ""
+    with_url = (
+        f"http://{display_host}:{current_app.config['DISPLAY_HTTP_PORT']}"
+        if display_host
+        else current_app.config["QR_PUBLIC_BASE_URL"] or request.url_root.rstrip("/")
+    )
     from .db import transaction
 
     with transaction() as cursor:
@@ -484,14 +498,19 @@ def inventory_product_qr(product_id):
     if not product:
         return jsonify(error="Product not found."), 404
     try:
-        scan_url = (
-            f'{with_url}/inventory/scan/{product["qr_token"]}?department={current_department()}'
+        scan_url = inventory_scan_url(
+            with_url,
+            product["qr_token"],
+            current_department(),
+            secure_proxy=False,
         )
-        return send_file(
+        response = send_file(
             make_qr_png(scan_url),
             mimetype="image/png",
             download_name=f'{product["roll_number"]}-QR.png',
         )
+        response.headers["X-Inventory-Scan-URL"] = scan_url
+        return response
     except RuntimeError as exc:
         return jsonify(error=str(exc)), 503
 
@@ -711,6 +730,11 @@ def manager_logout():
     return jsonify(ok=True)
 
 
+@web.get("/api/manager/status")
+def manager_status():
+    return jsonify(manager_access=bool(session.get("manager_access")))
+
+
 @web.post("/api/production-records")
 def production():
     try:
@@ -852,8 +876,100 @@ def records(record_type):
         record_date=request.args.get("date") or None,
         machine_code=(request.args.get("machine") or "").strip() or None,
         formula_code=(request.args.get("formula") or "").strip().upper() or None,
+        event_type=(request.args.get("event_type") or "").strip() or None,
     )
     return jsonify(records=rows, page=page, page_size=page_size, total=total)
+
+
+@web.get("/api/data-export/options")
+def data_export_options():
+    try:
+        return jsonify(datasets={
+            dataset: [{"key": key, "label": label} for key, label in data_export_columns(dataset)]
+            for dataset in ("production", "abnormality")
+        })
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@web.post("/api/data-export/preview")
+def data_export_preview():
+    payload = request.get_json() or {}
+    try:
+        columns, labels, rows = prepare_data_export(
+            payload.get("dataset"), payload.get("start_date"), payload.get("end_date"),
+            payload.get("columns"),
+        )
+        return jsonify(
+            columns=[{"key": key, "label": labels[key]} for key in columns],
+            rows=rows[:20], total=len(rows), preview_limit=20,
+        )
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@web.post("/api/data-export.xlsx")
+def data_export_download():
+    payload = request.get_json() or {}
+    try:
+        output, row_count = export_data_workbook(
+            payload.get("dataset"), payload.get("start_date"), payload.get("end_date"),
+            payload.get("columns"),
+        )
+        response = send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=(
+                f"GNEM_{current_department()}_{payload.get('dataset')}_"
+                f"{payload.get('start_date')}_to_{payload.get('end_date')}.xlsx"
+            ),
+        )
+        response.headers["X-Export-Row-Count"] = str(row_count)
+        return response
+    except (ValueError, RuntimeError) as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@web.post("/api/report-pdf")
+def report_pdf_download():
+    """Convert the already-rendered report image into readable A4-ratio PDF pages."""
+    upload = request.files.get("report_image")
+    if not upload:
+        return jsonify(error="Generate a report before exporting PDF."), 400
+    raw = upload.read(25 * 1024 * 1024 + 1)
+    if not raw or len(raw) > 25 * 1024 * 1024:
+        return jsonify(error="The report image is empty or too large."), 400
+    try:
+        image = Image.open(io.BytesIO(raw))
+        image.load()
+        if image.width < 400 or image.height < 200 or image.width * image.height > 60_000_000:
+            raise ValueError("The report image dimensions are invalid.")
+        image = image.convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        return jsonify(error=str(exc) or "The report image is invalid."), 400
+
+    page_height = round(image.width * 297 / 210)
+    pages = []
+    for top in range(0, image.height, page_height):
+        crop = image.crop((0, top, image.width, min(top + page_height, image.height)))
+        page = Image.new("RGB", (image.width, page_height), "white")
+        page.paste(crop, (0, 0))
+        pages.append(page)
+    output = io.BytesIO()
+    pages[0].save(
+        output,
+        format="PDF",
+        save_all=True,
+        append_images=pages[1:],
+        resolution=150,
+    )
+    output.seek(0)
+    report_date = re.sub(r"[^0-9-]", "", request.form.get("report_date", ""))[:10]
+    machine = re.sub(r"[^A-Za-z0-9_-]", "", request.form.get("machine", ""))[:30]
+    suffix = f"-{machine}" if machine else ""
+    filename = f"GNEM-{current_department()}{suffix}-{report_date or 'report'}.pdf"
+    return send_file(output, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
 @web.get("/api/forms/<form_key>")
@@ -920,7 +1036,7 @@ def public_display_data():
 @web.get("/api/manager/display-settings")
 @require_manager
 def manager_display_settings():
-    return jsonify(settings=get_display_settings())
+    return jsonify(settings=get_display_settings(), abnormality_types=get_event_types())
 
 
 @web.post("/api/manager/display-settings")
@@ -1013,6 +1129,16 @@ def configure_standard_field(form_key):
             ok=True,
             message="Standard field setting saved to system_import.standard_field_settings.",
         )
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@web.delete("/api/manager/forms/<form_key>/standard-fields/<field_key>")
+@require_manager
+def reset_standard_field(form_key, field_key):
+    try:
+        reset_standard_field_setting(form_key, field_key)
+        return jsonify(ok=True, message="Standard field restored to system defaults.")
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 

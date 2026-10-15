@@ -104,7 +104,71 @@ function slittingEventTimeline(events) {
   if (!events.length) return '<p class="share-empty">No abnormalities recorded / 今日无异常记录</p>';
   return `<div class="abnormality-timeline">${events.map(event=>`<article class="timeline-event ${event.is_resolved==='no'?'timeline-open':''}"><time>${escapeHtml(event.event_time||'—')}</time><div><strong>${escapeHtml(event.machine_code)} · ${escapeHtml(event.event_type)}</strong><span>${escapeHtml(event.subcategory||event.description||'—')}</span>${event.event_notes?`<p>${escapeHtml(event.event_notes)}</p>`:''}</div><aside><strong>${Number(event.duration_minutes)||0} min</strong><span>${event.is_resolved==='yes'?'Closed / 已完成':'Open / 处理中'}</span></aside></article>`).join('')}</div>`;
 }
-async function loadSlittingDailyReport(events, selectedDate, machine = '') {
+
+function slittingFourWeekTrend(rows, dates, selectedMachine = '') {
+  const filtered = selectedMachine ? rows.filter(row => row.machine_code === selectedMachine) : rows,
+    machineNames = [...new Set(filtered.map(row => row.machine_code || 'Unknown'))].sort(),
+    palette = ['#168a85', '#4f8fbd', '#d46b5f', '#d49a35', '#7b68ad', '#6f8794', '#b65e92'];
+  if (!machineNames.length) return '<p class="share-empty">No abnormal downtime in the previous four weeks / 近四周无异常停机记录。</p>';
+  return `<div class="slitting-four-week-grid">${machineNames.map(machine => {
+    const machineRows = filtered.filter(row => (row.machine_code || 'Unknown') === machine),
+      categories = [...new Map(machineRows.map(row => [row.event_type, row.category_label || row.event_type])).entries()],
+      width = 720, height = 238, left = 48, right = 24, top = 48, bottom = 34,
+      plotWidth = width - left - right, plotHeight = height - top - bottom,
+      cumulative = categories.map(([type, label], categoryIndex) => {
+        let total = 0;
+        const values = dates.map(day => {
+          total += machineRows.filter(row => row.event_type === type && row.event_date === day)
+            .reduce((sum, row) => sum + Number(row.minutes || 0), 0);
+          return total;
+        });
+        return {type, label, values, total, color: palette[categoryIndex % palette.length]};
+      }),
+      maximum = Math.max(1, ...cumulative.flatMap(item => item.values)),
+      xAt = index => left + index / Math.max(1, dates.length - 1) * plotWidth,
+      yAt = value => top + plotHeight - value / maximum * plotHeight,
+      grid = [0, .5, 1].map(ratio => `<g><line x1="${left}" y1="${yAt(maximum*ratio)}" x2="${width-right}" y2="${yAt(maximum*ratio)}" class="slitting-trend-grid"/><text x="${left-7}" y="${yAt(maximum*ratio)+4}" text-anchor="end">${Math.round(maximum*ratio)}m</text></g>`).join(''),
+      lines = cumulative.map(item => {
+        const points = item.values.map((value, index) => `${xAt(index).toFixed(1)},${yAt(value).toFixed(1)}`).join(' '),
+          finalX = xAt(dates.length - 1), finalY = yAt(item.total);
+        return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><title>${escapeHtml(item.label)}: ${Math.round(item.total)} min cumulative</title></polyline><circle cx="${finalX}" cy="${finalY}" r="4" fill="${item.color}"/><text x="${finalX-7}" y="${finalY-7}" text-anchor="end" class="slitting-trend-final">${Math.round(item.total)}m</text>`;
+      }).join(''),
+      legend = cumulative.map(item => `<span><svg viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${item.color}"/></svg>${escapeHtml(item.label)} <strong>${Math.round(item.total)}m</strong></span>`).join(''),
+      ticks = [0, 7, 14, 21, 27].map(index => `<text x="${xAt(index)}" y="${height-10}" text-anchor="middle">${escapeHtml(dates[index].slice(5))}</text>`).join('');
+    return `<article class="slitting-four-week-card"><h3>${escapeHtml(machine)}</h3><div class="slitting-four-week-legend">${legend}</div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(machine)} cumulative abnormal downtime over four weeks">${grid}${lines}${ticks}</svg></article>`;
+  }).join('')}</div>`;
+}
+
+function slittingPlanAttainmentComparison(rows, dates, selectedMachine = '') {
+  dates = dates.slice(-7);
+  const filtered = (selectedMachine ? rows.filter(row => row.machine_code === selectedMachine) : rows)
+      .filter(row => dates.includes(row.record_date)),
+    machines = [...new Set(filtered.map(row => row.machine_code).filter(Boolean))].sort(),
+    palette = ['#168a85', '#4f8fbd', '#d49a35', '#d46b5f', '#7b68ad', '#6f8794'];
+  if (!machines.length) return '<p class="share-empty">No production trend data / 无生产趋势数据</p>';
+  const width=1200,height=310,left=62,right=38,top=38,bottom=42,plotWidth=width-left-right,plotHeight=height-top-bottom,
+    values=Object.fromEntries(machines.map(machine=>[machine,Object.fromEntries(dates.map(day=>[day,{planned:0,actual:0}]))]));
+  filtered.forEach(row=>{const cell=values[row.machine_code]?.[row.record_date];if(cell){cell.planned+=Number(row.planned_quantity)||0;cell.actual+=Number(row.actual_quantity)||0}});
+  const rates=machines.flatMap(machine=>dates.map(day=>{const cell=values[machine][day];return cell.planned?cell.actual/cell.planned:null}).filter(value=>value!=null)),
+    maximum=Math.max(1.1,...rates),x=index=>left+index/Math.max(1,dates.length-1)*plotWidth,y=value=>top+plotHeight-value/maximum*plotHeight,
+    grid=[0,.5,1,maximum].map(rate=>`<g><line x1="${left}" y1="${y(rate)}" x2="${width-right}" y2="${y(rate)}" class="slitting-trend-grid"/><text x="${left-8}" y="${y(rate)+4}" text-anchor="end">${Math.round(rate*100)}%</text></g>`).join(''),
+    lines=machines.map((machine,index)=>{const points=dates.map((day,dateIndex)=>{const cell=values[machine][day];return cell.planned?`${x(dateIndex)},${y(cell.actual/cell.planned)}`:null}).filter(Boolean).join(' ');return `<polyline points="${points}" fill="none" stroke="${palette[index%palette.length]}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>`}).join(''),
+    legend=machines.map((machine,index)=>`<span><i style="background:${palette[index%palette.length]}"></i>${escapeHtml(machine)}</span>`).join(''),
+    ticks=dates.map((day,index)=>`<text x="${x(index)}" y="${height-10}" text-anchor="middle">${escapeHtml(day.slice(5))}</text>`).join('');
+  return `<article class="slitting-comparison-card"><h3>Seven-day plan attainment by machine / 近七天各机台计划达成率</h3><div class="slitting-four-week-legend">${legend}</div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Seven-day plan attainment by machine">${grid}${lines}${ticks}</svg></article>`;
+}
+
+function slittingAbnormalityPivot(rows, selectedMachine = '') {
+  const filtered=selectedMachine?rows.filter(row=>row.machine_code===selectedMachine):rows,
+    machines=[...new Set(filtered.map(row=>row.machine_code||'Unknown'))].sort(),
+    categories=[...new Map(filtered.map(row=>[row.event_type,row.category_label||row.event_type])).entries()];
+  if(!machines.length)return '<p class="share-empty">No abnormal downtime in the previous four weeks / 近四周无异常停机记录。</p>';
+  const total=(machine,type)=>filtered.filter(row=>(row.machine_code||'Unknown')===machine&&row.event_type===type).reduce((sum,row)=>sum+Number(row.minutes||0),0);
+  return `<div class="table-wrap slitting-pivot"><table><thead><tr><th>Machine / 机台</th>${categories.map(([,label])=>`<th>${escapeHtml(label)}</th>`).join('')}<th>Total / 合计</th></tr></thead><tbody>${machines.map(machine=>{const values=categories.map(([type])=>total(machine,type));return `<tr><th>${escapeHtml(machine)}</th>${values.map(value=>`<td>${Math.round(value)} min</td>`).join('')}<td><strong>${Math.round(values.reduce((sum,value)=>sum+value,0))} min</strong></td></tr>`}).join('')}</tbody></table></div>`;
+}
+
+async function loadSlittingDailyReport(reportData, selectedDate, machine = '') {
+  const events = reportData.events || [];
   const params = {
     date: selectedDate
   };
@@ -117,6 +181,9 @@ async function loadSlittingDailyReport(events, selectedDate, machine = '') {
   window.latestSlittingReport = {
     production: data,
     events: filteredEvents,
+    trendDates: reportData.trend_dates || [],
+    abnormalityTrends: (reportData.abnormality_trends || []).filter(row => !machine || row.machine_code === machine),
+    productionTrends: (reportData.production_trends || []).filter(row => !machine || row.machine_code === machine),
     date: selectedDate,
     machine
   };
@@ -131,8 +198,12 @@ async function loadSlittingDailyReport(events, selectedDate, machine = '') {
       qualified: 0
     });
   document.querySelector('#report-production').innerHTML =
-    `<div class="share-kpis slitting-overview-kpis"><article class="kpi-rolls"><span>Planned rolls / 计划卷数</span><strong>${compactNumber(rolls.planned,0)}</strong></article><article class="kpi-rolls"><span>Input rolls / 投入卷数</span><strong>${compactNumber(rolls.input,0)}</strong></article><article class="kpi-rolls"><span>Qualified rolls / 合格卷数</span><strong>${overall.pending ? 'Pending / 待补录' : compactNumber(rolls.qualified,0)}</strong></article><article class="kpi-output"><span>Actual output / 实际产出</span><strong>${compactNumber(overall.actual_quantity)} m²</strong></article><article class="kpi-qualified"><span>Qualified output / 合格产出</span><strong>${qualifiedOutput(overall)}</strong></article><article class="kpi-rate"><span>Plan attainment / 达成率</span><strong>${compactPercent(overall.achievement_rate)}</strong></article><article class="kpi-rate"><span>Qualified rate / 合格率</span><strong>${compactPercent(overall.qualified_rate)}</strong></article><article class="kpi-rate"><span>Yield / 综收</span><strong>${compactPercent(overall.yield_rate)}</strong></article></div><div class="share-machine-list">${data.machines.map(slittingMachineShareCard).join('')||'<p class="share-empty">No production recorded / 今日无生产记录</p>'}</div>`;
+    `<div class="share-kpis slitting-overview-kpis"><article class="kpi-rolls"><span>Planned rolls / 计划卷数</span><strong>${compactNumber(rolls.planned,0)}</strong></article><article class="kpi-rolls"><span>Actual rolls / 实际卷数</span><strong>${compactNumber(rolls.input,0)}</strong></article><article class="kpi-rolls"><span>Qualified rolls / 合格卷数</span><strong>${overall.pending ? 'Pending / 待补录' : compactNumber(rolls.qualified,0)}</strong></article><article class="kpi-output"><span>Actual output / 实际产出</span><strong>${compactNumber(overall.actual_quantity)} m²</strong></article><article class="kpi-qualified"><span>Qualified output / 合格产出</span><strong>${qualifiedOutput(overall)}</strong></article><article class="kpi-rate"><span>Plan attainment / 达成率</span><strong>${compactPercent(overall.achievement_rate)}</strong></article><article class="kpi-rate"><span>Qualified rate / 合格率</span><strong>${compactPercent(overall.qualified_rate)}</strong></article><article class="kpi-rate"><span>Yield / 综收</span><strong>${compactPercent(overall.yield_rate)}</strong></article></div><div class="share-machine-list">${data.machines.map(slittingMachineShareCard).join('')||'<p class="share-empty">No production recorded / 今日无生产记录</p>'}</div>`;
   document.querySelector('#report-events').innerHTML = slittingEventTimeline(filteredEvents);
+  document.querySelector('#report-slitting-trends').innerHTML = slittingPlanAttainmentComparison(
+    reportData.production_trends || [], reportData.trend_dates || [], machine) +
+    '<h3>Cumulative abnormality pivot / 累计异常透视表</h3>' +
+    slittingAbnormalityPivot(reportData.abnormality_trends || [], machine);
 }
 
 function canvasRoundedRect(context, x, y, width, height, radius, fill, stroke = null) {
@@ -161,22 +232,24 @@ function canvasText(context, text, x, y, {
   context.fillText(String(text ?? '—'), x, y, maxWidth);
 }
 
-function downloadCanvas(canvas, filename) {
+function downloadCanvas(canvas, filename = null) {
   return new Promise((resolve, reject) => canvas.toBlob(blob => {
     if (!blob) {
       reject(new Error('Image conversion failed.'));
       return;
     }
-    const url = URL.createObjectURL(blob),
-      link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    resolve();
+    if (filename) {
+      const url = URL.createObjectURL(blob),
+        link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    resolve(blob);
   }, 'image/png'));
 }
-async function saveSlittingReportImage() {
+async function saveSlittingReportImage(download = true) {
   const report = window.latestSlittingReport;
   if (!report) throw new Error('Generate the report first.');
   await document.fonts.ready;
@@ -185,11 +258,17 @@ async function saveSlittingReportImage() {
     gap = 16,
     cardWidth = (width - margin * 2 - gap) / 2;
   const machineHeights = report.production.machines.map(machine => 80 + Math.max(1, machine
-    .records.length) * 48);
+    .records.length) * 68);
   const machinesHeight = machineHeights.reduce((total, height, index) => total + (index % 2 ===
     0 ? Math.max(height, machineHeights[index + 1] || 0) + gap : 0), 0);
+  const recentTrendDates = report.trendDates.slice(-7),
+    trendMachineNames = [...new Set((report.productionTrends || []).filter(row => recentTrendDates
+      .includes(row.record_date)).map(row => row.machine_code || 'Unknown'))].sort(),
+    abnormalityMachines = [...new Set((report.abnormalityTrends || []).map(row => row.machine_code || 'Unknown'))].sort(),
+    abnormalityCategories = [...new Map((report.abnormalityTrends || []).map(row => [row.event_type, row.category_label || row.event_type])).entries()],
+    trendHeight = 330 + Math.max(88, 42 + abnormalityMachines.length * 34);
   const eventsHeight = Math.max(70, report.events.length * 76);
-  const height = 48 + 54 + 116 + machinesHeight + 62 + eventsHeight + 48;
+  const height = 48 + 54 + 116 + machinesHeight + trendHeight + 62 + eventsHeight + 48;
   if (height > 30000) throw new Error('Report is too long for one image.');
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -213,14 +292,17 @@ async function saveSlittingReportImage() {
   context.fillStyle = '#063b5c';
   context.fillRect(margin, 84, width - margin * 2, 3);
   const overall = report.production.overall;
+  const actualRolls = (report.production.records || []).reduce((sum, row) =>
+    sum + Number(row.input_rolls || 0), 0);
   const kpis = [
     ['Actual output / 实际产出', `${compactNumber(overall.actual_quantity)} m²`],
+    ['Actual rolls / 实际卷数', compactNumber(actualRolls, 0)],
     ['Qualified output / 合格产出', qualifiedOutput(overall)],
     ['Plan attainment / 达成率', compactPercent(overall.achievement_rate)],
     ['Qualified rate / 合格率', compactPercent(overall.qualified_rate)],
     ['Yield / 综收', compactPercent(overall.yield_rate)]
   ];
-  const kpiWidth = (width - margin * 2 - gap * 4) / 5;
+  const kpiWidth = (width - margin * 2 - gap * (kpis.length - 1)) / kpis.length;
   kpis.forEach(([label, value], index) => {
     const x = margin + index * (kpiWidth + gap);
     canvasRoundedRect(context, x, 105, kpiWidth, 82, 10, '#e3f1f5');
@@ -274,30 +356,43 @@ async function saveSlittingReportImage() {
       });
     });
     (machine.records.length ? machine.records : [{}]).forEach((record, rowIndex) => {
-      const rowTop = actualY + 68 + rowIndex * 48;
+      const rowTop = actualY + 70 + rowIndex * 68;
       if (record.machine_code) {
         canvasText(context, `${record.shift_name} · ${record.formula_code}`, x + 15,
           rowTop, {
             size: 13,
             weight: 700,
-            maxWidth: 340
+            maxWidth: 255
           });
-        canvasText(context,
-          `${record.input_rolls} in · ${record.qualified_rolls??'—'} qualified`, x +
-          370, rowTop, {
-            size: 13,
-            maxWidth: 165
+        const rollMetrics = [
+          [record.planned_rolls, 'Planned / 计划'],
+          [record.input_rolls, 'Actual rolls / 实际卷数'],
+          [record.qualified_rolls ?? 'Pending', 'Qualified / 合格'],
+        ];
+        rollMetrics.forEach(([value, label], metricIndex) => {
+          const metricX = x + 270 + metricIndex * 92;
+          canvasText(context, value, metricX, rowTop - 4, {
+            size: 14,
+            weight: 800,
+            maxWidth: 86
           });
+          canvasText(context, label, metricX, rowTop + 18, {
+            size: 9,
+            color: '#526977',
+            maxWidth: 88
+          });
+        });
         canvasText(context, `${compactNumber(record.actual_quantity)} m²`, x + cardWidth -
           15, rowTop, {
-            size: 13,
+            size: 12,
             weight: 700,
-            align: 'right'
+            align: 'right',
+            maxWidth: 112
           });
         canvasText(context, record.notes || '', x + 15, rowTop + 22, {
-          size: 11,
+          size: 10,
           color: '#657985',
-          maxWidth: cardWidth - 30
+          maxWidth: 245
         });
       } else canvasText(context, 'No production / 无生产记录', x + 15, rowTop, {
         size: 13,
@@ -306,6 +401,30 @@ async function saveSlittingReportImage() {
     });
   });
   if (report.production.machines.length) y += Math.max(...machineHeights.slice(-2)) + gap;
+  canvasText(context, 'Seven-day plan attainment by machine / 近七天各机台计划达成率',
+    margin, y + 4, {size: 22, weight: 800, color: '#063b5c'});
+  y += 42;
+  if (!trendMachineNames.length) {
+    canvasRoundedRect(context, margin, y, width - margin * 2, 58, 8, '#ffffff', '#b9ced8');
+    canvasText(context, 'No production trend data / 无生产趋势数据',
+      margin + 18, y + 19, {size: 14, color: '#526977'});
+    y += 74;
+  } else {
+    const trendColors = ['#168a85', '#4f8fbd', '#d46b5f', '#d49a35', '#7b68ad', '#6f8794'];
+    const chartDates=report.trendDates.slice(-7),chartLeft=margin+58,chartRight=width-margin-24,chartTop=y+48,chartBottom=y+250,
+      series=trendMachineNames.map((machine,index)=>({machine,color:trendColors[index%trendColors.length],values:chartDates.map(day=>{const rows=(report.productionTrends||[]).filter(row=>row.machine_code===machine&&row.record_date===day);const planned=rows.reduce((sum,row)=>sum+Number(row.planned_quantity||0),0);return planned?rows.reduce((sum,row)=>sum+Number(row.actual_quantity||0),0)/planned:null})})),
+      maximum=Math.max(1.1,...series.flatMap(item=>item.values.filter(value=>value!=null)));
+    canvasRoundedRect(context,margin,y,width-margin*2,280,9,'#ffffff','#b9ced8');
+    series.forEach((item,index)=>{context.fillStyle=item.color;context.fillRect(margin+18+index*150,y+15,12,12);canvasText(context,item.machine,margin+36+index*150,y+12,{size:12,weight:700});context.strokeStyle=item.color;context.lineWidth=3;context.beginPath();let started=false;item.values.forEach((value,dateIndex)=>{if(value==null)return;const pointX=chartLeft+dateIndex/Math.max(1,chartDates.length-1)*(chartRight-chartLeft),pointY=chartBottom-value/maximum*(chartBottom-chartTop);if(!started){context.moveTo(pointX,pointY);started=true}else context.lineTo(pointX,pointY)});context.stroke();const finalIndex=item.values.map((value,i)=>value==null?-1:i).filter(i=>i>=0).pop();if(finalIndex!=null){const value=item.values[finalIndex],pointX=chartLeft+finalIndex/Math.max(1,chartDates.length-1)*(chartRight-chartLeft),pointY=chartBottom-value/maximum*(chartBottom-chartTop);context.beginPath();context.arc(pointX,pointY,4,0,Math.PI*2);context.fillStyle=item.color;context.fill();canvasText(context,`${Math.round(value*100)}%`,pointX-7,pointY-16-index*13,{size:12,weight:900,color:item.color,align:'right'})}});
+    canvasText(context,'6 days ago / 六天前',chartLeft,chartBottom+10,{size:10,color:'#657985'});canvasText(context,'Report date / 报告日',chartRight,chartBottom+10,{size:10,color:'#657985',align:'right'});
+    y += 296;
+  }
+  canvasText(context,'Cumulative abnormality pivot (minutes) / 累计异常透视表（分钟）',margin,y+4,{size:22,weight:800,color:'#063b5c'});y+=38;
+  const pivotColumns=Math.max(1,abnormalityCategories.length+2),pivotWidth=(width-margin*2)/pivotColumns;
+  context.fillStyle='#dceaf0';context.fillRect(margin,y,width-margin*2,32);
+  ['Machine / 机台',...abnormalityCategories.map(([,label])=>label),'Total / 合计'].forEach((label,index)=>canvasText(context,label,margin+index*pivotWidth+8,y+8,{size:10,weight:800,maxWidth:pivotWidth-12}));y+=32;
+  abnormalityMachines.forEach((machine,rowIndex)=>{if(rowIndex%2===0){context.fillStyle='#edf4f7';context.fillRect(margin,y,width-margin*2,32)}const values=abnormalityCategories.map(([type])=>(report.abnormalityTrends||[]).filter(row=>(row.machine_code||'Unknown')===machine&&row.event_type===type).reduce((sum,row)=>sum+Number(row.minutes||0),0));[machine,...values.map(value=>`${Math.round(value)} min`),`${Math.round(values.reduce((sum,value)=>sum+value,0))} min`].forEach((value,index)=>canvasText(context,value,margin+index*pivotWidth+8,y+8,{size:11,weight:index===0||index===pivotColumns-1?800:500,maxWidth:pivotWidth-12}));y+=32});
+  if(!abnormalityMachines.length){canvasText(context,'No abnormal downtime / 无异常停机记录',margin+12,y+8,{size:13,color:'#657985'});y+=32}
   canvasText(context, 'Abnormality timeline / 异常时间线', margin, y + 4, {
     size: 22,
     weight: 800,
@@ -364,8 +483,8 @@ async function saveSlittingReportImage() {
     color: '#748792',
     align: 'right'
   });
-  await downloadCanvas(canvas,
-    `GNEM-slitting-${report.machine||'all-machines'}-${report.date}-daily-report.png`);
+  return downloadCanvas(canvas, download ?
+    `GNEM-slitting-${report.machine||'all-machines'}-${report.date}-daily-report.png` : null);
 }
 
 function populateSubcategories(form, selected = '') {

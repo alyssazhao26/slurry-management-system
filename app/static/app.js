@@ -76,7 +76,13 @@ let viewHistory = ['home'];
 let viewHistoryIndex = 0;
 let pendingManagerAction = null;
 
-function openManagerWorkspace() {
+async function openManagerWorkspace() {
+  const response = await fetch('/api/manager/status');
+  const data = await response.json();
+  if (!data.manager_access) {
+    openManagerLogin(openManagerWorkspace);
+    return;
+  }
   document.querySelector('#manager-workspace-dialog').showModal();
   if (department === 'slurry') initialiseAttendanceManager();
 }
@@ -89,7 +95,7 @@ function openManagerLogin(action = null) {
   document.querySelector('#manager-login-dialog').showModal();
   queueMicrotask(() => form.elements.pin.focus())
 }
-document.querySelector('#manager-sign-in').addEventListener('click', () => openManagerLogin());
+document.querySelector('#manager-sign-in').addEventListener('click', openManagerWorkspace);
 document.querySelector('#close-manager-workspace').addEventListener('click', () => document
   .querySelector('#manager-workspace-dialog').close());
 document.querySelector('#close-manager-login').addEventListener('click', () => document
@@ -129,15 +135,6 @@ document.querySelector('#workspace-sign-out').addEventListener('click', async ()
     await refreshCsrfToken();
     document.querySelector('#manager-workspace-dialog').close();
     say('Manager signed out. / 管理员已退出。')
-  }
-});
-document.querySelector('#manager-sign-out').addEventListener('click', async () => {
-  const response = await fetch('/api/manager/logout', {
-    method: 'POST'
-  });
-  if (response.ok) {
-    await refreshCsrfToken();
-    document.querySelector('#manager-login-status').textContent = 'Signed out. / 已退出。'
   }
 });
 document.querySelector('#create-manager-backup').addEventListener('click', async event => {
@@ -567,7 +564,10 @@ function show(viewId, recordHistory = true) {
   document.querySelector(`#${viewId}`).classList.add('active');
   if (viewId === 'inventory') loadInventory();
   if (viewId === 'production-records') loadRecords('production', '#production-table');
-  if (viewId === 'tracker') loadRecords('tracker', '#tracker-table', true);
+  if (viewId === 'tracker') {
+    loadEventTypes();
+    loadRecords('tracker', '#tracker-table', true);
+  }
   if (viewId === 'ongoing') loadRecords('ongoing', '#ongoing-table');
   if (viewId === 'daily-report') {
     const dateInput = document.querySelector('#report-date');
@@ -812,11 +812,23 @@ async function loadCostFailureTypes(manager = false) {
 }
 
 let managerEventTypes = [];
+function populateTrackerEventTypeFilter(types) {
+  const select = document.querySelector('[data-history-filters="tracker"] [name="event_type"]');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">All / 全部</option>' + types.map(type =>
+    `<option value="${escapeHtml(type.event_value)}">${escapeHtml(type.display_name)}</option>`
+  ).join('');
+  if ([...select.options].some(option => option.value === current)) select.value = current;
+}
 async function loadEventTypes(manager = false) {
   if (isSlitting) {
     const response = await fetch('/api/event-types');
     const data = await response.json();
-    if (response.ok) managerEventTypes = data.types;
+    if (response.ok) {
+      managerEventTypes = data.types;
+      populateTrackerEventTypeFilter(data.types);
+    }
     return;
   }
   try {
@@ -830,6 +842,7 @@ async function loadEventTypes(manager = false) {
     select.innerHTML = data.types.map(type =>
       `<option value="${escapeHtml(type.event_value)}">${escapeHtml(type.display_name)}</option>`
       ).join('');
+    populateTrackerEventTypeFilter(data.types);
     if (manager) {
       managerEventTypes = data.types;
       const selector = document.querySelector('#existing-event-type');
@@ -937,6 +950,10 @@ function renderTable(target, rows, fields, tracker = false, pagination = null) {
         row[field.key];
       if (field.key === 'qualified_pending') value = Number(value) ?
         '<span class="pending-badge">Pending / 待补录</span>' : 'Complete / 已完成';
+      if (tracker && field.key === 'description' && value) {
+        const words = String(value).trim().split(/\s+/);
+        value = words.slice(0, 5).join(' ') + (words.length > 5 ? '…' : '');
+      }
       if (value === null || value === undefined || value === '') value = '—';
       return `<td>${field.key === 'qualified_pending' ? value : escapeHtml(value)}</td>`;
     }).join('');
@@ -1008,6 +1025,8 @@ const recordColumns = {
     ['machine_code', 'Machine / 设备'],
     ['machine_type', 'Process type / 工艺类型'],
     ['event_type', 'Event type'],
+    ['duration_minutes', 'Duration min / 持续分钟'],
+    ['description', 'What happened / 发生了什么'],
     ['severity', 'Severity / Priority'],
     ['responsible_person', 'Responsible person'],
     ['target_finish_date', 'Expected finish'],
@@ -1065,8 +1084,102 @@ function recordFilters(type) {
     machine: root.querySelector('[name="machine"]').value.trim(),
     formula: root.querySelector('[name="formula"]')?.value.trim() || '',
     width: root.querySelector('[name="width"]')?.value.trim() || '',
+    event_type: root.querySelector('[name="event_type"]')?.value || '',
   };
 }
+
+let dataExportOptions = null;
+
+function selectedDataExportColumns() {
+  return [...document.querySelectorAll('#data-export-columns input:checked')].map(input => input
+    .value);
+}
+
+function renderDataExportColumns() {
+  const form = document.querySelector('#data-export-form'),
+    dataset = form.elements.dataset.value,
+    columns = dataExportOptions?.datasets?.[dataset] || [];
+  document.querySelector('#data-export-columns').innerHTML = columns.map(column =>
+    `<label><input type="checkbox" value="${escapeHtml(column.key)}" checked> ${escapeHtml(column.label)}</label>`
+  ).join('');
+  document.querySelector('#download-data-export').disabled = true;
+  document.querySelector('#data-export-preview').innerHTML =
+    '<p class="empty">Choose dates and columns, then preview. / 选择日期和列后点击预览。</p>';
+}
+
+async function openDataExport(dataset) {
+  const dialog = document.querySelector('#data-export-dialog'),
+    form = document.querySelector('#data-export-form');
+  if (!dataExportOptions) {
+    const response = await fetch('/api/data-export/options'), data = await response.json();
+    if (!response.ok) return say(data.error || 'Could not load export options.');
+    dataExportOptions = data;
+  }
+  form.elements.dataset.value = dataset;
+  const today = new Date(), start = new Date(today);
+  start.setDate(start.getDate() - 30);
+  form.elements.end_date.value = localDateValue(today);
+  form.elements.start_date.value = localDateValue(start);
+  renderDataExportColumns();
+  document.querySelector('#data-export-status').textContent = '';
+  dialog.showModal();
+}
+
+function dataExportPayload() {
+  const form = document.querySelector('#data-export-form');
+  return {
+    dataset: form.elements.dataset.value,
+    start_date: form.elements.start_date.value,
+    end_date: form.elements.end_date.value,
+    columns: selectedDataExportColumns()
+  };
+}
+
+document.querySelectorAll('.open-data-export').forEach(button => button.addEventListener('click', () =>
+  openDataExport(button.dataset.exportDataset)));
+document.querySelector('#close-data-export').addEventListener('click', () => document.querySelector(
+  '#data-export-dialog').close());
+document.querySelector('#data-export-form [name="dataset"]').addEventListener('change',
+  renderDataExportColumns);
+document.querySelector('#select-all-export-columns').addEventListener('click', () => document
+  .querySelectorAll('#data-export-columns input').forEach(input => { input.checked = true; }));
+document.querySelector('#clear-export-columns').addEventListener('click', () => document
+  .querySelectorAll('#data-export-columns input').forEach(input => { input.checked = false; }));
+document.querySelector('#data-export-columns').addEventListener('change', () => {
+  document.querySelector('#download-data-export').disabled = true;
+});
+document.querySelector('#data-export-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const payload = dataExportPayload(), status = document.querySelector('#data-export-status');
+  if (!payload.columns.length) return status.textContent = 'Select at least one column. / 请至少选择一列。';
+  status.textContent = 'Loading preview… / 正在加载预览…';
+  const response = await fetch('/api/data-export/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}),
+    data = await response.json();
+  if (!response.ok) return status.textContent = data.error || 'Could not preview export.';
+  const headers = data.columns.map(column => `<th>${escapeHtml(column.label)}</th>`).join(''),
+    body = data.rows.map(row => `<tr>${data.columns.map(column => `<td>${escapeHtml(row[column.key] ?? '—')}</td>`).join('')}</tr>`).join('');
+  document.querySelector('#data-export-preview').innerHTML = data.rows.length ?
+    `<p>Showing ${data.rows.length} of ${data.total} rows / 预览 ${data.rows.length}/${data.total} 行</p><div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>` :
+    '<p class="empty">No matching records / 没有符合条件的记录。</p>';
+  status.textContent = `${data.total} rows ready / ${data.total} 行可导出`;
+  document.querySelector('#download-data-export').disabled = false;
+});
+document.querySelector('#download-data-export').addEventListener('click', async () => {
+  const payload = dataExportPayload(), status = document.querySelector('#data-export-status');
+  status.textContent = 'Creating Excel… / 正在生成 Excel…';
+  const response = await fetch('/api/data-export.xlsx', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  if (!response.ok) {
+    const data = await response.json();
+    return status.textContent = data.error || 'Could not export Excel.';
+  }
+  const blob = await response.blob(), link = document.createElement('a'), disposition = response.headers.get('Content-Disposition') || '',
+    match = disposition.match(/filename="?([^";]+)"?/i);
+  link.href = URL.createObjectURL(blob);
+  link.download = match?.[1] || `GNEM-${payload.dataset}-export.xlsx`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  status.textContent = 'Excel exported. / Excel 已导出。';
+});
 
 async function loadRecords(type, target = recordTargets[type], tracker = false, page = 1) {
   if (isSlitting && type === "production") return loadSlittingProduction();
@@ -1232,24 +1345,22 @@ async function loadDailyReport() {
       `Report date / 报告日期: ${data.report_date}${machine ? ` · Machine / 机台: ${machine}` : ''}`;
     const productionColumns = selectedReportColumns('production'),
       eventColumns = selectedReportColumns('events');
-    if (!productionColumns.length || !eventColumns.length) {
-      say('Select at least one Production column and one Event column. / 生产数据和事件明细请各选择至少一列。');
-      return;
-    }
-    if (isSlitting) await loadSlittingDailyReport(data.events, dateInput.value, machine);
+    if (isSlitting) await loadSlittingDailyReport(data, dateInput.value, machine);
     else {
-      renderReportTable('#report-production', data.production, productionColumns);
-      renderReportTable('#report-events', data.events, eventColumns);
+      const model = renderSlurryManagementReport(data);
       window.latestSlurryReport = {
         date: dateInput.value,
         production: data.production,
         events: data.events,
+        ongoing: data.ongoing_events || [],
+        model,
         productionColumns,
         eventColumns
       };
     }
     document.querySelector('#report-sheet').hidden = false;
     document.querySelector('#save-report-image').hidden = false;
+    document.querySelector('#save-report-pdf').hidden = false;
   } catch {
     say(
       'Could not generate report. Check server setup and pending migrations. / 无法生成报告，请检查服务器设置和待处理迁移。');
@@ -1297,13 +1408,65 @@ function drawCanvasTable(context, title, rows, columns, y, width, margin) {
   });
   return y + 18;
 }
-async function saveSlurryReportImage() {
+
+function canvasTableHeight(rowCount) {
+  return rowCount ? 98 + rowCount * 38 : 96;
+}
+
+function wrapCanvasText(context, value, maxWidth) {
+  const words = String(value ?? '—').split(/\s+/), lines = [];
+  let line = '';
+  words.forEach(word => {
+    const candidate = line ? line + ' ' + word : word;
+    if (line && context.measureText(candidate).width > maxWidth) {
+      lines.push(line);
+      line = word;
+    } else line = candidate;
+  });
+  if (line) lines.push(line);
+  return lines.length ? lines : ['—'];
+}
+
+function drawCanvasWrappedTable(context, title, rows, columns, y, width, margin) {
+  context.font = '800 22px "Microsoft YaHei","Segoe UI",sans-serif';
+  context.fillStyle = '#063b5c';
+  context.fillText(title, margin, y + 24);
+  y += 42;
+  if (!rows.length) {
+    canvasCellText(context, 'No records / 无记录', margin + 14, y + 24, width - margin * 2);
+    return y + 54;
+  }
+  const tableWidth = width - margin * 2, cellWidth = tableWidth / columns.length;
+  context.fillStyle = '#dceaf1';
+  context.fillRect(margin, y, tableWidth, 38);
+  columns.forEach(([, label], index) => canvasCellText(context, label, margin + index * cellWidth + 7, y + 19, cellWidth - 12, 700));
+  y += 38;
+  rows.forEach((row, rowIndex) => {
+    context.font = '400 13px "Microsoft YaHei","Segoe UI",sans-serif';
+    const lines = columns.map(([key]) => wrapCanvasText(context, row[key], cellWidth - 14));
+    const rowHeight = Math.max(38, Math.max(...lines.map(item => item.length)) * 18 + 12);
+    context.fillStyle = rowIndex % 2 ? '#f2f7fa' : '#ffffff';
+    context.fillRect(margin, y, tableWidth, rowHeight);
+    lines.forEach((cellLines, index) => cellLines.forEach((line, lineIndex) => {
+      context.fillStyle = '#102f46';
+      context.fillText(line, margin + index * cellWidth + 7, y + 17 + lineIndex * 18, cellWidth - 14);
+    }));
+    y += rowHeight;
+  });
+  return y + 18;
+}
+
+async function saveSlurryReportImage(download = true) {
   const report = window.latestSlurryReport;
   if (!report) throw new Error('Generate the report first.');
   await document.fonts.ready;
   const width = 1800,
-    margin = 42;
-  const estimatedHeight = 130 + (report.production.length + report.events.length + 4) * 56;
+    margin = 42,
+    model = report.model;
+  const estimatedHeight = 220 + canvasTableHeight(report.production.length) + 56 +
+    model.categories.length * 38 + canvasTableHeight(model.unresolvedToday.length) +
+    canvasTableHeight(model.ongoing.length) + canvasTableHeight(model.effectiveNo.length) +
+    model.effectiveNo.length * 90 + 48;
   if (estimatedHeight > 30000) throw new Error('Report is too long for one image.');
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -1317,23 +1480,120 @@ async function saveSlurryReportImage() {
   context.font = '600 18px "Microsoft YaHei","Segoe UI",sans-serif';
   context.fillStyle = '#536b7c';
   context.fillText(`Report date / 报告日期: ${report.date}`, margin, 82);
-  let y = 105;
-  y = drawCanvasTable(context, 'Production data / 生产数据', report.production, report
-    .productionColumns, y, width, margin);
-  y = drawCanvasTable(context, 'Daily event details / 每日事件明细', report.events, report.eventColumns,
-    y, width, margin);
+  const attainment = model.totals.planned ? model.totals.actual / model.totals.planned : null,
+    quality = model.totals.actual && !model.totals.pending ? model.totals.qualified / model.totals
+      .actual : null;
+  const summary = [
+    ['Production / 生产', `${reportNumber(model.totals.actual,1)} / ${reportNumber(model.totals.planned,1)}`, attainment == null ? 'No plan' : `${(attainment*100).toFixed(1)}% attainment`],
+    ['Quality / 品质', model.totals.pending ? 'Pending / 待补录' : reportNumber(model.totals.qualified,1), quality == null ? `${model.totals.pending} pending` : `${(quality*100).toFixed(1)}% qualified`],
+    ['Recorded event time / 事件记录时间', `${reportNumber(model.categories.reduce((sum, row) => sum + row.minutes, 0))} min`, `${model.categories.length} recorded categories`],
+    ['Unresolved follow-up / 未解决跟进', reportNumber(model.unresolvedToday.length + model.ongoing.length), `${model.ongoing.length} carried from earlier dates`],
+  ];
+  const gap = 16,
+    cardWidth = (width - margin * 2 - gap * 3) / 4;
+  summary.forEach(([label, value, note], index) => {
+    const x = margin + index * (cardWidth + gap);
+    context.fillStyle = '#edf6f7';
+    context.fillRect(x, 108, cardWidth, 92);
+    context.fillStyle = '#168a85';
+    context.fillRect(x, 108, 5, 92);
+    canvasCellText(context, label, x + 18, 130, cardWidth - 30, 700);
+    context.font = '800 24px "Microsoft YaHei","Segoe UI",sans-serif';
+    context.fillStyle = '#082a4a';
+    context.fillText(value, x + 18, 164, cardWidth - 30);
+    context.font = '500 12px "Microsoft YaHei","Segoe UI",sans-serif';
+    context.fillStyle = '#526977';
+    context.fillText(note, x + 18, 187, cardWidth - 30);
+  });
+  let y = 220;
+  y = drawCanvasTable(context, 'Production performance / 生产绩效', report.production, [
+    ['formula_code', 'Formula / 配方'], ['batch_number', 'Batch / 批次'],
+    ['planned_quantity', 'Plan / 计划'], ['actual_quantity', 'Actual / 实际'],
+    ['achievement_rate', 'Attainment / 达成率'], ['qualified_quantity', 'Quality / 合格']
+  ], y, width, margin);
+  y = drawCanvasWrappedTable(context, 'Events without effective time cost / 无有效时间成本事件', model.effectiveNo, [
+    ['event_time', 'Time / 时间'], ['machine_code', 'Machine / 设备'],
+    ['event_type', 'Category / 类别'], ['description', 'What happened / 发生了什么'],
+    ['duration_minutes', 'Minutes / 分钟']
+  ], y, width, margin);
+  context.font = '800 22px "Microsoft YaHei","Segoe UI",sans-serif';
+  context.fillStyle = '#063b5c';
+  context.fillText('Recorded time by event category / 各事件类别记录时间', margin, y + 24);
+  y += 48;
+  const totalMinutes = model.categories.reduce((total, item) => total + item.minutes, 0),
+    colors = ['#168a85', '#4f8fbd', '#d46b5f', '#d49a35', '#7b68ad', '#6f8794'];
+  model.categories.forEach((item, index) => {
+    const percent = totalMinutes ? item.minutes / totalMinutes : 0;
+    canvasCellText(context, item.label, margin, y + 12, 360, 700);
+    context.fillStyle = '#e8eff2';
+    context.fillRect(margin + 380, y, width - margin * 2 - 560, 24);
+    context.fillStyle = colors[index % colors.length];
+    context.fillRect(margin + 380, y, (width - margin * 2 - 560) * percent, 24);
+    canvasCellText(context, `${reportNumber(item.minutes)} min · ${(percent*100).toFixed(1)}%`,
+      width - margin - 165, y + 12, 165, 700);
+    y += 38;
+  });
+  y += 8;
+  y = drawCanvasTable(context, 'Unresolved on report date / 报告日期未解决', model.unresolvedToday, [
+    ['event_time', 'Time / 时间'], ['event_type', 'Category / 类别'],
+    ['description', 'Issue / 问题'], ['responsible_person', 'Owner / 负责人'],
+    ['target_finish_date', 'Target / 目标'], ['follow_up_status', 'Follow-up / 跟进']
+  ], y, width, margin);
+  y = drawCanvasTable(context, 'Unresolved from earlier dates / 以往日期未解决', model.ongoing, [
+    ['event_date', 'Since / 开始'], ['machine_code', 'Machine / 设备'],
+    ['description', 'Issue / 问题'], ['responsible_person', 'Owner / 负责人'],
+    ['open_for', 'Open for / 持续'], ['follow_up_status', 'Follow-up / 跟进']
+  ], y, width, margin);
   const output = document.createElement('canvas');
   output.width = width;
   output.height = Math.min(canvas.height, y + 24);
   output.getContext('2d').drawImage(canvas, 0, 0);
   const blob = await new Promise(resolve => output.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('Image conversion failed.');
-  const url = URL.createObjectURL(blob),
-    link = document.createElement('a');
-  link.href = url;
-  link.download = `GNEM-slurry-${report.date}-daily-report.png`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (download) {
+    const url = URL.createObjectURL(blob),
+      link = document.createElement('a');
+    link.href = url;
+    link.download = `GNEM-slurry-${report.date}-daily-report.png`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return blob;
+}
+
+async function saveReportPdf() {
+  if (document.querySelector('#report-sheet').hidden) {
+    say('Generate the report first. / 请先生成报告。');
+    return;
+  }
+  const button = document.querySelector('#save-report-pdf'), previousText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Preparing PDF… / 正在生成PDF…';
+  try {
+    const image = isSlitting && typeof saveSlittingReportImage === 'function' ?
+      await saveSlittingReportImage(false) : await saveSlurryReportImage(false);
+    const form = new FormData();
+    form.append('report_image', image, 'report.png');
+    form.append('report_date', document.querySelector('#report-date').value);
+    if (isSlitting) form.append('machine', document.querySelector('#slitting-report-machine')?.value || '');
+    const response = await fetch('/api/report-pdf', {method: 'POST', body: form});
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Could not create PDF.');
+    }
+    const blob = await response.blob(), url = URL.createObjectURL(blob), link = document.createElement('a');
+    const disposition = response.headers.get('Content-Disposition') || '';
+    link.href = url;
+    link.download = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'GNEM-report.pdf';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    say('PDF report saved. / PDF报告已保存。');
+  } catch (error) {
+    say(`${error.message || 'Could not create PDF.'} / 无法生成PDF。`);
+  } finally {
+    button.disabled = false;
+    button.textContent = previousText;
+  }
 }
 
 async function saveReportImage() {
@@ -1687,6 +1947,7 @@ document.addEventListener('submit', async event => {
 });
 document.querySelector('#generate-report').addEventListener('click', loadDailyReport);
 document.querySelector('#save-report-image').addEventListener('click', saveReportImage);
+document.querySelector('#save-report-pdf').addEventListener('click', saveReportPdf);
 document.querySelectorAll('.copy').forEach(button => button.addEventListener('click', async () => {
   const table = document.querySelector(`#${button.dataset.copy} table`);
   if (!table) {
@@ -1825,10 +2086,11 @@ function currentTaskSlot(now = new Date()) {
     };
   }
   let shift = 'Day';
-  if (now.getHours() < 8) {
+  const shiftMinutes = now.getHours() * 60 + now.getMinutes();
+  if (shiftMinutes < 7 * 60 + 50) {
     target.setDate(target.getDate() - 1);
     shift = 'Night';
-  } else if (now.getHours() >= 20) shift = 'Night';
+  } else if (shiftMinutes >= 19 * 60 + 50) shift = 'Night';
   return {
     date: localDateValue(target),
     shift
@@ -2001,19 +2263,20 @@ document.querySelector('#close-cost-guide').addEventListener('click', () => cost
 
 document.querySelector('#event-type-form').addEventListener('submit', async event => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
     const response = await fetch('/api/manager/event-types', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))),
+      body: JSON.stringify(Object.fromEntries(new FormData(form))),
     });
     const data = await response.json();
     say(response.ok ? `${data.message} / 事件类型已保存。` : data.error);
     if (response.ok) {
-      event.currentTarget.reset();
-      loadEventTypes(true);
+      form.reset();
+      await loadEventTypes(true);
     }
   } catch {
     say('Could not save event type.');
@@ -2121,6 +2384,16 @@ document.querySelector('#standard-field-form').addEventListener('submit', async 
     loadManagerStandardFields(payload.form_key);
     if (isSlitting) setTimeout(() => location.reload(), 450);
   }
+});
+document.querySelector('#reset-standard-field').addEventListener('click', async () => {
+  const form = document.querySelector('#standard-field-form'),
+    formKey = form.elements.form_key.value,
+    fieldKey = document.querySelector('#standard-field-select').value;
+  const response = await fetch('/api/manager/forms/' + encodeURIComponent(formKey) +
+    '/standard-fields/' + encodeURIComponent(fieldKey), {method: 'DELETE'});
+  const data = await response.json();
+  say(response.ok ? data.message : data.error);
+  if (response.ok) await loadManagerStandardFields(formKey);
 });
 let managerFields = [];
 async function loadManagerFields(formKey) {
@@ -2251,6 +2524,120 @@ function managerEditControl(key, label, kind, value) {
   return `<label>${label}<input name="${key}" type="${kind}" value="${safeValue}" ${kind === 'number' ? 'step="0.01" min="0"' : ''} ${required}></label>`;
 }
 
+function reportOpenDays(eventDate, reportDate) {
+  const opened = new Date(`${eventDate}T00:00:00`), reported = new Date(`${reportDate}T00:00:00`);
+  if (Number.isNaN(opened.getTime()) || Number.isNaN(reported.getTime())) return '—';
+  const days = Math.max(1, Math.floor((reported - opened) / 86400000) + 1);
+  return `${days} day${days === 1 ? '' : 's'} / ${days}天`;
+}
+
+function slurryReportModel(data) {
+  const totals = data.production.reduce((result, row) => ({
+    planned: result.planned + Number(row.planned_quantity || 0),
+    actual: result.actual + Number(row.actual_quantity || 0),
+    qualified: result.qualified + Number(row.qualified_quantity || 0),
+    pending: result.pending + Number(row.qualified_quantity == null),
+  }), {
+    planned: 0,
+    actual: 0,
+    qualified: 0,
+    pending: 0,
+  });
+  const categoryMap = new Map();
+  data.events.forEach(event => {
+    const label = String(event.event_type || 'Uncategorized / 未分类').trim();
+    categoryMap.set(label, (categoryMap.get(label) || 0) + Number(event.duration_minutes || 0));
+  });
+  const categories = [...categoryMap].map(([label, minutes]) => ({label, minutes}))
+    .sort((a, b) => b.minutes - a.minutes);
+  const unresolvedToday = data.events.filter(event => event.is_resolved === 'no')
+    .map(event => ({...event, follow_up_status: 'Needs follow-up / 待跟进'}));
+  const ongoing = (data.ongoing_events || []).filter(event => event.event_date < data.report_date)
+    .map(event => ({...event, open_for: reportOpenDays(event.event_date, data.report_date),
+      follow_up_status: 'Carried forward / 延续处理中'}));
+  const exceptions = data.events.filter(event => event.is_resolved !== 'no' &&
+    (Number(event.duration_minutes || 0) >= 60 ||
+      ['medium', 'high'].includes(String(event.severity).toLowerCase())));
+  const effectiveNo = data.events.filter(event => event.effective_time_cost === 'no');
+  return {
+    totals,
+    categories,
+    unresolvedToday,
+    ongoing,
+    exceptions,
+    effectiveNo,
+  };
+}
+
+function reportNumber(value, digits = 0) {
+  return Number(value || 0).toLocaleString(undefined, {
+    maximumFractionDigits: digits
+  });
+}
+
+function renderSlurryManagementReport(data) {
+  const model = slurryReportModel(data),
+    attainment = model.totals.planned ? model.totals.actual / model.totals.planned : null,
+    quality = model.totals.actual && !model.totals.pending ? model.totals.qualified / model.totals
+      .actual : null;
+  if (!document.querySelector('#report-summary')) {
+    renderReportTable('#report-production', data.production, selectedReportColumns('production'));
+    renderReportTable('#report-events', data.events, selectedReportColumns('events'));
+    return model;
+  }
+  document.querySelector('#report-summary').innerHTML = [
+    ['Production / 生产', `${reportNumber(model.totals.actual, 1)} / ${reportNumber(model.totals.planned, 1)}`, attainment == null ? 'No plan / 无计划' : `${(attainment*100).toFixed(1)}% attainment / 达成率`],
+    ['Quality / 品质', model.totals.pending ? 'Pending / 待补录' : reportNumber(model.totals.qualified, 1), quality == null ? `${model.totals.pending} pending / 待补录` : `${(quality*100).toFixed(1)}% qualified / 合格率`],
+    ['Recorded event time / 事件记录时间', `${reportNumber(model.categories.reduce((sum, row) => sum + row.minutes, 0))} min`, `${model.categories.length} recorded categories / 个记录类别`],
+    ['Unresolved follow-up / 未解决跟进', reportNumber(model.unresolvedToday.length + model.ongoing.length), `${model.ongoing.length} carried from earlier dates / 项从以往延续`],
+  ].map(([label, value, note]) => `<article><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`).join('');
+
+  const productionColumns = [
+    ['formula_code', 'Formula / 配方'], ['batch_number', 'Batch / 批次'],
+    ['planned_quantity', 'Plan / 计划'], ['actual_quantity', 'Actual / 实际'],
+    ['achievement_rate', 'Attainment / 达成率'], ['qualified_quantity', 'Quality / 合格']
+  ];
+  renderReportTable('#report-production', data.production, productionColumns);
+  renderReportTable('#report-effective-time', model.effectiveNo, [
+    ['event_time', 'Time / 时间'], ['machine_code', 'Machine / 设备'],
+    ['event_type', 'Category / 类别'], ['description', 'What happened / 发生了什么'],
+    ['duration_minutes', 'Minutes / 分钟']
+  ]);
+
+  const colors = ['#168a85', '#4f8fbd', '#d46b5f', '#d49a35', '#7b68ad', '#6f8794'],
+    totalMinutes = model.categories.reduce((total, item) => total + item.minutes, 0);
+  let categoryOffset = 0;
+  const compositionSegments = model.categories.map((item, index) => {
+    const percent = totalMinutes ? item.minutes / totalMinutes * 100 : 0,
+      segment = `<rect x="${categoryOffset.toFixed(2)}" y="0" width="${percent.toFixed(2)}" height="10" fill="${colors[index % colors.length]}"><title>${escapeHtml(item.label)}: ${percent.toFixed(1)}%</title></rect>`;
+    categoryOffset += percent;
+    return segment;
+  }).join('');
+  document.querySelector('#report-time-distribution').innerHTML =
+    `<svg class="category-composition" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="Event category composition"><rect width="100" height="10" fill="#e8eff2"></rect>${compositionSegments}</svg><div class="category-legend">${model.categories.map((item, index) => `<span><i class="category-color-${index % colors.length}"></i>${escapeHtml(item.label)}</span>`).join('')}</div><div class="time-distribution-chart">${model.categories.map((item, index) => {
+      const percent = totalMinutes ? item.minutes / totalMinutes * 100 : 0;
+      return `<div class="time-distribution-row"><div><strong>${escapeHtml(item.label)}</strong><span>${reportNumber(item.minutes)} min · ${percent.toFixed(1)}%</span></div><svg class="time-bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect width="100" height="10" fill="#e8eff2"></rect><rect width="${percent.toFixed(2)}" height="10" fill="${colors[index % colors.length]}"></rect></svg></div>`;
+    }).join('')}</div>`;
+
+  renderReportTable('#report-unresolved-today', model.unresolvedToday, [
+    ['event_time', 'Time / 时间'], ['event_type', 'Category / 类别'],
+    ['description', 'Issue / 问题'], ['responsible_person', 'Owner / 负责人'],
+    ['target_finish_date', 'Target date / 目标日期'], ['follow_up_status', 'Follow-up / 跟进']
+  ]);
+  const ongoingColumns = [
+    ['event_date', 'Since / 开始日期'], ['machine_code', 'Machine / 设备'],
+    ['description', 'Issue / 问题'], ['responsible_person', 'Owner / 负责人'],
+    ['open_for', 'Open for / 持续时间'], ['follow_up_status', 'Follow-up / 跟进']
+  ];
+  renderReportTable('#report-ongoing', model.ongoing, ongoingColumns);
+  renderReportTable('#report-exceptions', model.exceptions, [
+    ['event_time', 'Time / 时间'], ['event_type', 'Category / 类别'],
+    ['duration_minutes', 'Duration min / 持续分钟'], ['description', 'Event / 事件'],
+    ['severity', 'Severity / 严重程度']
+  ]);
+  return model;
+}
+
 function updateRecordDowntime(form) {
   const output = form.querySelector('[data-calculated-downtime]');
   if (!output) return;
@@ -2378,6 +2765,9 @@ async function openDisplaySettings() {
     b) => a.order - b.order).map(x => displaySettingMarkup(x, 'blocks')).join('');
   document.querySelector('#display-column-settings').innerHTML = data.settings.event_columns.map(
     x => displaySettingMarkup(x, 'event_columns')).join('');
+  const selectedAbnormalityTypes = new Set(data.settings.abnormality_chart_types || []);
+  document.querySelector('#display-abnormality-types').innerHTML = (data.abnormality_types || [])
+    .map(item => `<label><input type="checkbox" value="${escapeHtml(item.event_value)}" ${selectedAbnormalityTypes.has(item.event_value)?'checked':''}> <span>${escapeHtml(item.display_name)}</span></label>`).join('');
   renderDisplayLayoutPreview();
   document.querySelector('#display-settings-dialog').showModal()
 }
@@ -2566,7 +2956,9 @@ document.querySelector('#display-settings-form').addEventListener('submit', asyn
     blocks: collectDisplaySettings(document.querySelector('#display-block-settings'),
       'blocks'),
     event_columns: collectDisplaySettings(document.querySelector(
-      '#display-column-settings'), 'event_columns')
+      '#display-column-settings'), 'event_columns'),
+    abnormality_chart_types: [...document.querySelectorAll(
+      '#display-abnormality-types input:checked')].map(input => input.value)
   };
   const response = await fetch('/api/manager/display-settings', {
     method: 'POST',
@@ -2580,6 +2972,12 @@ document.querySelector('#display-settings-form').addEventListener('submit', asyn
     'Display settings saved. / 看板设置已保存。' : (data.error || 'Could not save display settings.');
   if (response.ok) document.querySelector('#brand-title').textContent = data.settings.branding
     .title
+});
+document.querySelector('#select-all-abnormality-types').addEventListener('click', () => {
+  document.querySelectorAll('#display-abnormality-types input').forEach(input => input.checked = true)
+});
+document.querySelector('#clear-abnormality-types').addEventListener('click', () => {
+  document.querySelectorAll('#display-abnormality-types input').forEach(input => input.checked = false)
 });
 document.querySelector('#select-all-event-columns')?.addEventListener('click', () => {
   document.querySelectorAll('#display-column-settings [data-setting-visible]').forEach(

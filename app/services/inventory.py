@@ -1,5 +1,6 @@
 import io
 from datetime import date, datetime
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from ..db import transaction
@@ -260,12 +261,31 @@ def check_out_product(token, scanned_by=None):
 def make_qr_png(value):
     try:
         import qrcode
+        from qrcode.constants import ERROR_CORRECT_H
     except ImportError as exc:
         raise RuntimeError(
             "QR support is not installed. Run pip install -r requirements.txt."
         ) from exc
-    image = qrcode.make(value)
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=ERROR_CORRECT_H,
+        box_size=12,
+        border=4,
+    )
+    qr.add_data(value)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
     output = io.BytesIO()
     image.save(output, format="PNG")
     output.seek(0)
     return output
+
+
+def inventory_scan_url(base_url, token, department, secure_proxy=False):
+    """Build the phone URL, correcting HTTP when the application is behind HTTPS."""
+    parsed = urlsplit(str(base_url or "").strip().rstrip("/"))
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise RuntimeError("QR_PUBLIC_BASE_URL must be a complete HTTP or HTTPS address.")
+    scheme = "https" if secure_proxy and parsed.scheme == "http" else parsed.scheme
+    base = urlunsplit((scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+    return f"{base}/inventory/scan/{token}?department={department}"

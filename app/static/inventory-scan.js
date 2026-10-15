@@ -4,6 +4,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const cameraCapture = document.querySelector('#camera-capture');
   const token = decodeURIComponent(window.location.pathname.split('/').filter(Boolean)
   .pop() || '');
+  let csrfToken = '';
+  try {
+    const csrfResponse = await fetch('/api/csrf');
+    csrfToken = (await csrfResponse.json()).token || '';
+  } catch (_error) {
+    result.textContent = 'Unable to start a secure scan session. Reload this page. / 无法建立扫码会话，请刷新页面。';
+    result.classList.add('scan-warning');
+    return;
+  }
   cameraCapture.addEventListener('change', async () => {
     const file = cameraCapture.files?.[0];
     if (!file) {
@@ -27,6 +36,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       form.append('image', blob, 'qr-scan.jpg');
       const response = await fetch('/api/inventory/decode-qr', {
         method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrfToken
+        },
         body: form
       });
       const data = await response.json();
@@ -44,7 +56,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const response = await fetch(`/api/inventory/scan/${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken
       },
       body: '{}',
     });

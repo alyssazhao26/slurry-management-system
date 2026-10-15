@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import re
 from datetime import date, datetime, timedelta
@@ -419,6 +420,7 @@ def list_records(
     record_date=None,
     machine_code=None,
     formula_code=None,
+    event_type=None,
 ):
     queries = {
         "production": """
@@ -435,7 +437,7 @@ def list_records(
         """,
         "tracker": """
             SELECT id, event_date, start_time, end_time, shift_name, machine_code, machine_type, event_type, severity,
-                   description, immediate_action, responsible_person, target_finish_date,
+                   duration_minutes, description, immediate_action, responsible_person, target_finish_date,
                    solution_provided, actual_finish_date, effectiveness, is_resolved, custom_fields, state
             FROM system_import.abnormality_reports
         """,
@@ -477,6 +479,9 @@ def list_records(
     if record_type == "production" and formula_code:
         conditions.append("formula_code = %s")
         params.append(formula_code)
+    if record_type in {"abnormality", "tracker", "ongoing"} and event_type:
+        conditions.append("event_type = %s")
+        params.append(event_type)
     where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     offset = (page - 1) * page_size
     with transaction() as cursor:
@@ -497,6 +502,141 @@ def list_records(
     if uses_slitting_workflow():
         rows = [slitting.enrich(row) for row in rows]
     return _json_safe_rows(rows), total
+
+
+DATA_EXPORT_COLUMNS = {
+    "production": [
+        ("id", "ID"), ("record_date", "Date / 日期"), ("shift_name", "Shift / 班次"),
+        ("machine_code", "Machine / 设备"), ("formula_code", "Formula or model / 配方或型号"),
+        ("batch_number", "Batch / 批次"), ("planned_quantity", "Planned quantity / 计划数量"),
+        ("actual_quantity", "Actual quantity / 实际数量"),
+        ("qualified_quantity", "Qualified quantity / 合格数量"),
+        ("qualified_pending", "Qualification pending / 待补录合格"),
+        ("achievement_rate", "Achievement rate / 达成率"),
+        ("qualified_rate", "Qualified rate / 合格率"), ("notes", "Notes / 备注"),
+        ("created_at", "Created / 创建时间"),
+        ("planned_rolls", "Planned rolls / 计划卷数"), ("input_rolls", "Input rolls / 投入卷数"),
+        ("qualified_rolls", "Qualified rolls / 合格卷数"), ("input_area", "Input area / 投入面积"),
+        ("yield_rate", "Yield / 综收"),
+    ],
+    "abnormality": [
+        ("id", "ID"), ("event_date", "Date / 日期"), ("start_time", "Start time / 开始时间"),
+        ("end_time", "End time / 结束时间"), ("shift_name", "Shift / 班次"),
+        ("machine_code", "Machine / 设备"), ("machine_type", "Process type / 工艺类型"),
+        ("event_type", "Event type or main category / 事件类型或主类别"),
+        ("subcategory", "Subcategory / 子类别"), ("severity", "Severity / 严重程度"),
+        ("duration_minutes", "Duration minutes / 持续分钟"),
+        ("description", "What happened / 发生了什么"),
+        ("immediate_action", "Immediate action / 立即措施"),
+        ("is_resolved", "Resolved / 已解决"), ("state", "Status / 状态"),
+        ("responsible_person", "Responsible person / 责任人"),
+        ("target_finish_date", "Expected finish / 预计完成"),
+        ("actual_finish_date", "Actual finish / 实际完成"),
+        ("solution_provided", "Solution / 解决方案"),
+        ("effective_time_cost", "Effective time cost / 有效时间成本"),
+        ("effectiveness", "Effectiveness / 有效性"), ("event_notes", "Event notes / 事件备注"),
+        ("created_at", "Created / 创建时间"),
+    ],
+}
+
+
+def data_export_columns(dataset):
+    if dataset not in DATA_EXPORT_COLUMNS:
+        raise ValueError("Choose Production or Abnormality data.")
+    columns = DATA_EXPORT_COLUMNS[dataset]
+    if dataset == "production" and not uses_slitting_workflow():
+        columns = [item for item in columns if item[0] not in {
+            "planned_rolls", "input_rolls", "qualified_rolls", "input_area", "yield_rate"
+        }]
+    if dataset == "abnormality" and not uses_slitting_workflow():
+        columns = [item for item in columns if item[0] not in {"subcategory", "event_notes"}]
+    return columns
+
+
+def _export_date_range(start_date, end_date):
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Choose valid export start and end dates.") from exc
+    if start > end:
+        raise ValueError("The export start date cannot be after the end date.")
+    if (end - start).days > 366:
+        raise ValueError("Choose an export range of one year or less.")
+    return start, end
+
+
+def data_export_rows(dataset, start_date, end_date):
+    start, end = _export_date_range(start_date, end_date)
+    if dataset == "production":
+        query = """SELECT id, record_date, shift_name, machine_code, formula_code, batch_number,
+                          planned_quantity, actual_quantity, qualified_quantity, qualified_pending,
+                          achievement_rate, qualified_rate, notes, custom_fields, created_at
+                   FROM system_import.production_records
+                   WHERE record_date BETWEEN %s AND %s
+                   ORDER BY record_date, shift_name, machine_code, id"""
+    elif dataset == "abnormality":
+        query = """SELECT id, event_date, start_time, end_time, shift_name, machine_code,
+                          machine_type, event_type, severity, duration_minutes, description,
+                          immediate_action, is_resolved, state, responsible_person,
+                          target_finish_date, actual_finish_date, solution_provided,
+                          effective_time_cost, effectiveness, custom_fields, created_at
+                   FROM system_import.abnormality_reports
+                   WHERE event_date BETWEEN %s AND %s
+                   ORDER BY event_date, start_time, machine_code, id"""
+    else:
+        raise ValueError("Choose Production or Abnormality data.")
+    with transaction() as cursor:
+        cursor.execute(query, (start, end))
+        rows = cursor.fetchall()
+    if uses_slitting_workflow():
+        rows = [slitting.enrich(row) for row in rows]
+    return _json_safe_rows(rows)
+
+
+def prepare_data_export(dataset, start_date, end_date, selected_columns=None):
+    available = data_export_columns(dataset)
+    available_keys = {key for key, _ in available}
+    columns = list(selected_columns or [])
+    if not columns:
+        columns = [key for key, _ in available]
+    if any(key not in available_keys for key in columns):
+        raise ValueError("One or more selected export columns are invalid.")
+    labels = dict(available)
+    rows = data_export_rows(dataset, start_date, end_date)
+    return columns, labels, rows
+
+
+def export_data_workbook(dataset, start_date, end_date, selected_columns):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+    except ImportError as exc:
+        raise RuntimeError("Excel export is unavailable. Install requirements.txt first.") from exc
+    columns, labels, rows = prepare_data_export(dataset, start_date, end_date, selected_columns)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Production" if dataset == "production" else "Abnormalities"
+    sheet.append([labels[key] for key in columns])
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="164E70")
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+    for row in rows:
+        sheet.append([row.get(key, "") for key in columns])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for index, key in enumerate(columns, 1):
+        values = [labels[key], *[str(row.get(key, "") or "") for row in rows[:200]]]
+        sheet.column_dimensions[sheet.cell(1, index).column_letter].width = min(48, max(12,
+            max(len(value) for value in values) + 2))
+        for cell in sheet.iter_cols(min_col=index, max_col=index, min_row=2):
+            for item in cell:
+                item.alignment = Alignment(wrap_text=True, vertical="top")
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output, len(rows)
 
 
 def update_tracker(report_id, payload, manager=False):
@@ -772,6 +912,17 @@ def save_standard_field_setting(form_key, payload):
         )
 
 
+def reset_standard_field_setting(form_key, field_key):
+    valid = {key for key, _, _ in _standard_field_catalog().get(form_key, [])}
+    if field_key not in valid:
+        raise ValueError("Choose a valid standard field.")
+    with transaction() as cursor:
+        cursor.execute(
+            "DELETE FROM system_import.standard_field_settings WHERE form_key=%s AND field_key=%s",
+            (form_key, field_key),
+        )
+
+
 def get_cost_failure_types(include_inactive=False):
     query = "SELECT type_code, display_name, definition, is_active FROM system_import.cost_failure_types"
     if not include_inactive:
@@ -786,7 +937,7 @@ def get_event_types(include_inactive=False):
     if uses_slitting_workflow():
         return [
             {"event_value": key, "display_name": key, "is_active": True}
-            for key in slitting.CATEGORIES
+            for key in slitting.event_categories()
         ]
     query = "SELECT event_value, display_name, is_active FROM system_import.event_type_options"
     if not include_inactive:
@@ -1216,13 +1367,27 @@ def default_display_settings():
             "branding": branding,
             "blocks": blocks,
             "event_columns": [dict(x) for x in SLITTING_EVENT_COLUMN_DEFAULTS],
+            "abnormality_chart_types": [],
+            "abnormality_chart_types_configured": False,
         }
     return {
         "layout_version": 4,
         "branding": dict(DISPLAY_BRANDING_DEFAULTS),
         "blocks": [dict(x) for x in DISPLAY_BLOCK_DEFAULTS],
         "event_columns": [],
+        "abnormality_chart_types": [],
+        "abnormality_chart_types_configured": False,
     }
+
+
+def _default_abnormality_chart_types():
+    """Keep the historical chart behavior until a manager saves a selection."""
+    excluded = {"cleaning", "normal production"}
+    return [
+        row["event_value"]
+        for row in get_event_types()
+        if str(row.get("event_value", "")).strip().lower() not in excluded
+    ]
 
 
 def get_display_settings():
@@ -1232,7 +1397,9 @@ def get_display_settings():
         )
         row = cursor.fetchone()
     if not row:
-        return default_display_settings()
+        defaults = default_display_settings()
+        defaults["abnormality_chart_types"] = _default_abnormality_chart_types()
+        return defaults
     saved = (
         json.loads(row["settings_json"])
         if isinstance(row["settings_json"], str)
@@ -1283,6 +1450,16 @@ def get_display_settings():
                 for item in saved_items
                 if item.get("key") not in default_keys and item.get("type") == "static_text"
             )
+    configured = bool(saved.get("abnormality_chart_types_configured", False))
+    defaults["abnormality_chart_types_configured"] = configured
+    if configured:
+        defaults["abnormality_chart_types"] = [
+            str(value).strip()
+            for value in saved.get("abnormality_chart_types", [])
+            if str(value).strip()
+        ]
+    else:
+        defaults["abnormality_chart_types"] = _default_abnormality_chart_types()
     if current_department() == "coating":
         replacements = (
             ("SLITTING", "COATING"),
@@ -1324,6 +1501,17 @@ def save_display_settings(payload, actor_id=None):
             "Application and display titles are required and header text must be 160 characters or fewer."
         )
     cleaned["branding"] = cleaned_branding
+    selected_types = payload.get("abnormality_chart_types")
+    if not isinstance(selected_types, list):
+        raise ValueError("Abnormality chart event types must be a list.")
+    cleaned["abnormality_chart_types"] = list(
+        dict.fromkeys(
+            value
+            for value in (str(item).strip() for item in selected_types)
+            if value and len(value) <= 160
+        )
+    )
+    cleaned["abnormality_chart_types_configured"] = True
     for group in ("blocks", "event_columns"):
         if not isinstance(payload.get(group), list):
             raise ValueError(f"{group} must be a list.")
@@ -1428,9 +1616,10 @@ def current_production_slot(now=None):
         if production_date.weekday() == 6:
             production_date += timedelta(days=1)
         return production_date, "Day 08-20"
-    if now.hour < 8:
+    shift_minutes = now.hour * 60 + now.minute
+    if shift_minutes < 7 * 60 + 50:
         return now.date() - timedelta(days=1), "Night"
-    if now.hour >= 20:
+    if shift_minutes >= 19 * 60 + 50:
         return now.date(), "Night"
     return now.date(), "Day"
 
@@ -1445,7 +1634,7 @@ def production_shift_label(production_date, shift_name):
         else:
             hours = "08:00–20:00"
         return f"Day · {hours}"
-    return "Day · 08:00–20:00" if shift_name == "Day" else "Night · 20:00–08:00"
+    return "Day · 07:50–19:50" if shift_name == "Day" else "Night · 19:50–07:50"
 
 
 def get_daily_task(record_date=None, shift_name=None):
@@ -1764,13 +1953,67 @@ def daily_report(record_date):
             (selected_date,),
         )
         events = cursor.fetchall()
+        cursor.execute(
+            """
+            SELECT id, event_date, shift_name, machine_code, machine_type,
+                   CONCAT(COALESCE(TIME_FORMAT(start_time, '%H:%i'), '—'), ' - ',
+                          COALESCE(TIME_FORMAT(end_time, '%H:%i'), '—')) AS event_time,
+                   duration_minutes, event_type, severity, description, immediate_action,
+                   responsible_person, target_finish_date, custom_fields
+            FROM system_import.abnormality_reports
+            WHERE is_resolved = 'no'
+            ORDER BY event_date, start_time, machine_code
+            """
+        )
+        ongoing_events = cursor.fetchall()
+        abnormality_trends = []
+        production_trends = []
+        if uses_slitting_workflow():
+            cursor.execute(
+                """
+                SELECT record_date, machine_code,
+                       COALESCE(SUM(planned_quantity), 0) AS planned_quantity,
+                       COALESCE(SUM(actual_quantity), 0) AS actual_quantity
+                FROM system_import.production_records
+                WHERE record_date BETWEEN DATE_SUB(%s, INTERVAL 27 DAY) AND %s
+                GROUP BY record_date, machine_code
+                ORDER BY record_date, machine_code
+                """,
+                (selected_date, selected_date),
+            )
+            production_trends = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT reports.event_date, reports.machine_code, reports.event_type,
+                       COALESCE(options.display_name, reports.event_type) AS category_label,
+                       COALESCE(SUM(reports.duration_minutes), 0) AS minutes
+                FROM system_import.abnormality_reports AS reports
+                LEFT JOIN system_import.event_type_options AS options
+                  ON options.event_value = reports.event_type
+                WHERE reports.event_date BETWEEN DATE_SUB(%s, INTERVAL 27 DAY) AND %s
+                  AND LOWER(TRIM(reports.event_type)) NOT IN ('cleaning', 'normal production')
+                GROUP BY reports.event_date, reports.machine_code, reports.event_type,
+                         options.display_name
+                ORDER BY reports.machine_code, reports.event_date, category_label
+                """,
+                (selected_date, selected_date),
+            )
+            abnormality_trends = cursor.fetchall()
     if uses_slitting_workflow():
         production = [slitting.enrich(row) for row in production]
         events = [slitting.enrich(row) for row in events]
+        ongoing_events = [slitting.enrich(row) for row in ongoing_events]
     return {
         "report_date": record_date,
         "production": _json_safe_rows(production),
         "events": _json_safe_rows(events),
+        "ongoing_events": _json_safe_rows(ongoing_events),
+        "trend_dates": [
+            (selected_date - timedelta(days=offset)).isoformat()
+            for offset in range(27, -1, -1)
+        ],
+        "abnormality_trends": _json_safe_rows(abnormality_trends),
+        "production_trends": _json_safe_rows(production_trends),
     }
 
 
@@ -1787,9 +2030,17 @@ def public_display_summary(record_date=None, shift_name=None):
             raise ValueError("Choose Day or Night shift.")
     except ValueError as exc:
         raise ValueError("Choose a valid display date.") from exc
+    display_settings = get_display_settings()
+    abnormality_chart_types = display_settings.get("abnormality_chart_types", [])
+    type_placeholders = ", ".join(["%s"] * len(abnormality_chart_types))
+    abnormality_type_clause = (
+        f"AND reports.event_type IN ({type_placeholders})"
+        if abnormality_chart_types
+        else "AND 1 = 0"
+    )
     with transaction() as cursor:
         cursor.execute(
-            """
+            f"""
             SELECT record_date, shift_name, task_types, task_items, reminders, custom_task, formula_code, amount_needed, machine_assigned, updated_at
             FROM system_import.daily_tasks
             WHERE record_date = %s AND shift_name = %s
@@ -1895,19 +2146,19 @@ def public_display_summary(record_date=None, shift_name=None):
         )
         weekly_production_detail_rows = cursor.fetchall()
         cursor.execute(
-            """
-            SELECT reports.event_date, reports.event_type,
+            f"""
+            SELECT reports.event_date, reports.machine_code, reports.event_type,
                    COALESCE(options.display_name, reports.event_type) AS category_label,
                    COALESCE(SUM(reports.duration_minutes), 0) AS minutes
             FROM system_import.abnormality_reports AS reports
             LEFT JOIN system_import.event_type_options AS options
               ON options.event_value = reports.event_type
             WHERE reports.event_date BETWEEN DATE_SUB(%s, INTERVAL 6 DAY) AND %s
-              AND LOWER(TRIM(reports.event_type)) NOT IN ('cleaning', 'normal production')
-            GROUP BY reports.event_date, reports.event_type, options.display_name
-            ORDER BY reports.event_date, category_label
+              {abnormality_type_clause}
+            GROUP BY reports.event_date, reports.machine_code, reports.event_type, options.display_name
+            ORDER BY reports.event_date, reports.machine_code, category_label
             """,
-            (selected_date, selected_date),
+            (selected_date, selected_date, *abnormality_chart_types),
         )
         abnormality_trend_rows = cursor.fetchall()
 
@@ -1975,6 +2226,7 @@ def public_display_summary(record_date=None, shift_name=None):
             {
                 "type": row["event_type"],
                 "label": row["category_label"],
+                "machine": row["machine_code"],
                 "minutes": float(row["minutes"] or 0),
             }
         )
@@ -2031,7 +2283,7 @@ def public_display_summary(record_date=None, shift_name=None):
             "abnormalities": abnormality_trend,
             "production_details": _json_safe_rows(weekly_production_details),
         },
-        "display_settings": get_display_settings(),
+        "display_settings": display_settings,
         "last_updated": latest.isoformat(sep=" ", timespec="seconds") if latest else None,
     }
 

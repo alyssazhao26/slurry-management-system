@@ -17,14 +17,16 @@ def compact(source):
 def test_production_slot_uses_night_shift_start_date():
     with Flask(__name__).app_context(), department_context("slitting"):
         assert records.current_production_slot(
-            datetime(2026, 9, 7, 7, 59),
+            datetime(2026, 9, 7, 7, 49),
         ) == (date(2026, 9, 6), "Night")
         assert records.current_production_slot(
-            datetime(2026, 9, 7, 8, 0),
+            datetime(2026, 9, 7, 7, 50),
         ) == (date(2026, 9, 7), "Day")
         assert records.current_production_slot(
-            datetime(2026, 9, 7, 20, 0),
+            datetime(2026, 9, 7, 19, 50),
         ) == (date(2026, 9, 7), "Night")
+        assert records.production_shift_label(date(2026, 9, 7), "Day") == "Day · 07:50–19:50"
+        assert records.production_shift_label(date(2026, 9, 7), "Night") == "Night · 19:50–07:50"
 
 
 def test_slurry_uses_two_selectable_day_schedules():
@@ -161,8 +163,13 @@ def test_slitting_training_is_rendered_on_management_dashboard():
 
     assert "item.type === 'slitting_training'" in app_js
     assert "Training / 培训" in app_js
-    assert "app.js?v=20260921-fixed-display" in dashboard
+    assert "app.js?v=20261015-report-pdf" in dashboard
+    assert "slitting.js?v=20261015-report-pdf" in dashboard
     assert "select-all-event-columns" in dashboard
+    assert "display-abnormality-types" in dashboard
+    assert "abnormality_chart_types" in app_js
+    assert "save-report-pdf" in dashboard
+    assert "saveReportPdf" in app_js
 
 
 def test_slitting_report_labels_and_optional_training():
@@ -173,10 +180,41 @@ def test_slitting_report_labels_and_optional_training():
     assert "Actual output / 实际产出" in report_js
     assert "Qualified output / 合格产出" in report_js
     assert "function qualifiedOutput(stats)" in report_js
+    assert "Actual rolls / 实际卷数" in report_js
+    assert "Actual rolls / 实际卷数', compactNumber(actualRolls, 0)" in report_js
+    assert "Planned / 计划" in report_js
+    assert "Qualified / 合格" in report_js
+    assert "in · ${record.qualified_rolls" not in report_js
     assert "Date / 日期" in report_js
     display_compact = compact(display_js)
     assert "trainingSection.hidden=!trainingVisible" in display_compact
     assert "taskSection.dataset.fullRow=String(!trainingVisible)" in display_compact
+
+
+def test_slurry_daily_report_is_management_by_exception():
+    root = Path(__file__).parents[1]
+    app_js = (root / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    template = (root / "app" / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    service = (root / "app" / "services" / "records.py").read_text(encoding="utf-8")
+
+    assert "Recorded time by event category / 各事件类别记录时间" in template
+    assert "Categories are shown exactly as entered" in template
+    assert "Unresolved on report date / 报告日期未解决" in template
+    assert "Unresolved from earlier dates / 以往日期未解决" in template
+    assert "View full event log / 查看完整事件记录" not in template
+    assert "Notable completed events / 重点已完成事件" in template
+    assert "function slurryReportModel(data)" in app_js
+    assert "const categoryMap = new Map()" in app_js
+    assert "function reportOpenDays(eventDate, reportDate)" in app_js
+    assert "canvasTableHeight(model.unresolvedToday.length)" in app_js
+    assert 'class="category-composition" viewBox="0 0 100 10"' in app_js
+    assert "report-effective-time" in template
+    assert "load-sample-report" not in template
+    assert "renderReportTable('#report-exceptions', model.exceptions" in app_js
+    assert "drawCanvasTable(context, 'Notable completed events" not in app_js
+    assert "overdue / 已逾期" not in app_js
+    assert "WHERE is_resolved = 'no'" in service
+    assert '"ongoing_events": _json_safe_rows(ongoing_events)' in service
 
 
 def test_slurry_abnormality_chart_uses_stacked_downtime_and_exclusions():
@@ -192,6 +230,39 @@ def test_slurry_abnormality_chart_uses_stacked_downtime_and_exclusions():
     assert "bottomPauseMilliseconds = 10000" in chart_source
     assert "setTimeout(scrollDown, topPauseMilliseconds)" in chart_source
     assert "direction === 'down' ? 'up' : 'down'" not in chart_source
+
+
+def test_slitting_display_compares_machines_for_attainment_and_downtime():
+    root = Path(__file__).parents[1]
+    source = (root / "app" / "static" / "slitting-display.js").read_text(encoding="utf-8")
+    service = (root / "app" / "services" / "records.py").read_text(encoding="utf-8")
+    assert "function slittingMachineAttainmentTrend(rows, dates)" in source
+    assert "Cumulative downtime by machine / 各机台累计停机时间" in source
+    assert "machine-stacked-bar" in source
+    assert "machine-downtime-legend" in source
+    assert "machine-segment-label" in source
+    assert "Daily downtime by category / 每日各类别停机时间" in source
+    assert "item.categories[category.type]" in source
+    assert '"machine": row["machine_code"]' in service
+
+
+def test_slitting_report_compares_machine_attainment_and_uses_abnormality_pivot():
+    root = Path(__file__).parents[1]
+    source = (root / "app" / "static" / "slitting.js").read_text(encoding="utf-8")
+    service = (root / "app" / "services" / "records.py").read_text(encoding="utf-8")
+    template = (root / "app" / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    assert "function slittingPlanAttainmentComparison(rows, dates, selectedMachine = '')" in source
+    assert "function slittingAbnormalityPivot(rows, selectedMachine = '')" in source
+    assert "Machine performance and four-week abnormality summary" in template
+    assert "Seven-day plan attainment by machine" in source
+    assert "dates = dates.slice(-7)" in source
+    assert "chartDates.length-1" in source
+    assert "DATE_SUB(%s, INTERVAL 27 DAY)" in service
+    assert '"abnormality_trends"' in service
+    assert '"production_trends"' in service
+    assert '"trend_dates"' in service
+    assert "Cumulative abnormality pivot" in source
+    assert "machine-point-label" in (root / "app" / "static" / "slitting-display.js").read_text(encoding="utf-8")
 
 
 def test_slurry_display_uses_conditional_content_rows():
@@ -228,10 +299,10 @@ def test_slitting_pending_uses_separate_full_width_row():
         in stylesheet
     )
     assert ".slitting-event-grid{display:grid;grid-template-columns:repeat(4" in stylesheet
-    assert "display.css?v=20260921-four-block-grid" in template
+    assert "display.css?v=20261015-point-labels" in template
     assert "No pending records until" in source
     assert "No unresolved events until" in source
-    assert "slitting-display.js?v=20260921-empty-status-messages" in template
+    assert "slitting-display.js?v=20261015-point-labels" in template
     assert "TV_LAYOUT_WIDTH" not in source
 
 

@@ -2,6 +2,44 @@
 
 This project uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
+## 5.0 - 2026-10-15
+
+Major reporting, display, export, and mobile inventory release for the combined Slurry and Slitting system.
+
+### Added
+
+- Added selectable TV abnormality categories in Manager Display Settings for Slurry event types and Slitting main categories.
+- Added date-range Excel exports with column selection and preview for Production and Abnormality data in both departments.
+- Added direct paginated PDF export for generated Slurry and Slitting reports.
+- Added event-type filtering and duration visibility to both event trackers.
+- Added Slurry and Slitting functionality-demo data scripts.
+
+### Changed
+
+- Reworked the Slitting report with a seven-day multi-machine plan-attainment chart, actual-roll totals, and a four-week machine-by-category abnormality pivot table.
+- Added visible percentage labels to the TV machine-attainment chart and improved cumulative downtime labels.
+- Changed Slitting daily-task boundaries to 07:50 and 19:50.
+- Improved report layout, header wrapping, manager authentication flow, configurable field defaults, and save-status feedback.
+
+### Fixed
+
+- Fixed phone-readable Slitting inventory QR codes and permitted only the inventory scan workflow on the read-only HTTP listener.
+- Fixed active manager-added Slitting event categories being rejected during event creation.
+- Fixed Slurry report generation, long report-image sizing, and misleading completed-event content in exported images.
+- Fixed ongoing Slitting abnormalities so all unresolved records are shown without restricting them to the current day.
+
+### Migrations
+
+- No new migration is required. Existing migration files and applied migration history remain unchanged.
+
+### Validation and release
+
+- Automated test suite passed: 133 tests.
+- Release-file, migration-integrity, Python-syntax, JavaScript-syntax, dependency, and whitespace checks passed.
+- Live Desktop HTTPS and read-only display endpoints were restarted and verified, including a successful PDF export.
+- Backup reference: no database change is included in this source tag; create the normal deployment backup before replacing production files.
+- Deployment owner: system administrator. Rollback decision: retain the previous `v4.1` package until `v5.0` is accepted in production.
+
 ## 3.3.0 - 2026-09-21
 
 ### Added

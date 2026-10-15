@@ -57,6 +57,35 @@ def test_remote_http_cannot_open_application_or_write(monkeypatch):
     assert client.post("/api/manager/display-settings", **request_options).status_code == 404
 
 
+def test_remote_http_allows_only_inventory_scan_workflow(monkeypatch):
+    monkeypatch.setattr(
+        "app.routes.get_product_by_token",
+        lambda token: {"roll_number": "QA-00001", "product_code": "QA", "slit_width_mm": 88.8},
+    )
+    monkeypatch.setattr(
+        "app.routes.check_out_product",
+        lambda token, scanned_by: {"roll_number": "QA-00001"},
+    )
+    client = build_app(monkeypatch).test_client()
+    options = {
+        "base_url": "http://192.168.1.10:5000",
+        "environ_base": {"REMOTE_ADDR": "192.168.1.20"},
+    }
+
+    assert client.get("/inventory/scan/roll-token?department=slitting", **options).status_code == 200
+    csrf = client.get("/api/csrf", **options).json["token"]
+    response = client.post(
+        "/api/inventory/scan/roll-token?department=slitting",
+        json={},
+        headers={"X-CSRF-Token": csrf},
+        **options,
+    )
+
+    assert response.status_code == 200
+    assert response.json["product"]["roll_number"] == "QA-00001"
+    assert client.get("/api/inventory?department=slitting", **options).status_code == 404
+
+
 def test_normal_https_application_still_accepts_remote_users(monkeypatch):
     monkeypatch.setattr("app.db.verify_ui_schema", lambda: None)
     monkeypatch.setattr(Config, "ENVIRONMENT", "development")

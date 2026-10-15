@@ -8,7 +8,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#082a4a">
     <title>GNEM Slurry Production Details</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260915-report-hierarchy">
+    <link rel="stylesheet" href="/static/style.css?v=20261015-data-export">
   </head>
   <body data-department="{{ department }}">
     <header class="topbar">
@@ -68,7 +68,7 @@
         <dialog id="home-task-dialog" class="task-dialog">
           <form id="home-daily-task-form" method="dialog" class="form-card form-grid">
             <div class="dialog-title"><h2>Schedule shift tasks / 安排班次任务</h2><button type="button" id="close-home-task" class="secondary">Close / 关闭</button></div>
-            <div class="wide task-slot-picker"><label>Production date / 生产日期<input id="home-task-date" type="date" required></label><label>Shift / 班次<select id="home-task-shift" required>{% if department == 'slurry' %}<option value="Day 08-20">Day · 08:00–20:00 / 白班</option><option value="Day 08-17">Day · 08:00–17:00 / 白班</option>{% else %}<option value="Day">Day · 08:00–20:00 / 白班</option><option value="Night">Night · 20:00–08:00 / 夜班</option>{% endif %}</select></label><button type="button" id="load-home-task-slot" class="secondary">Load selected shift / 加载所选班次</button></div>
+            <div class="wide task-slot-picker"><label>Production date / 生产日期<input id="home-task-date" type="date" required></label><label>Shift / 班次<select id="home-task-shift" required>{% if department == 'slurry' %}<option value="Day 08-20">Day · 08:00–20:00 / 白班</option><option value="Day 08-17">Day · 08:00–17:00 / 白班</option>{% else %}<option value="Day">Day · 07:50–19:50 / 白班</option><option value="Night">Night · 19:50–07:50 / 夜班</option>{% endif %}</select></label><button type="button" id="load-home-task-slot" class="secondary">Load selected shift / 加载所选班次</button></div>
             <p class="wide" id="home-task-editor-help">Add one item per task. Each production item has its own formula, tanks, and assigned machine. / 每项任务单独添加；每个生产任务可设置独立配方、罐数和设备。</p>
             <div id="home-task-items" class="wide task-items"></div>
             <div class="wide task-editor-actions"><button type="button" id="add-home-task-item" class="secondary">Add task / 添加任务</button><button type="button" id="add-home-schedule-item" class="secondary" data-slitting-only hidden>Add schedule row / 添加排程行</button><button type="button" id="add-home-training-item" class="secondary" data-slitting-only hidden>Add training / 添加培训</button></div>
@@ -139,22 +139,36 @@
             {% if roll_department %}<select id="slitting-report-machine" aria-label="Slitting machine / 分切机台"><option value="">All machines / 所有机台</option></select>{% endif %}
             <button id="generate-report" class="primary">{{ department_en }} Production Details / {{ department_cn }}生产明细</button>
             <button id="save-report-image" class="secondary" type="button" hidden>Save full report image / 保存完整报告图片</button>
+            <button id="save-report-pdf" class="secondary" type="button" hidden>Export PDF / 导出PDF</button>
           </div>
         </div>
-        <details class="report-column-picker" {% if roll_department %}hidden{% endif %}>
+        <details class="report-column-picker" hidden>
           <summary>Choose report columns / 选择报告列</summary>
           <p>Your choices are saved on this computer and used for future reports. / 您的选择将保存在本机，并用于之后的报告。</p>
           <div class="report-column-groups">
-            <fieldset><legend>Production data / 生产数据</legend><div id="production-report-columns" class="report-column-options"></div></fieldset>
+            {% if roll_department %}<fieldset><legend>Production data / 生产数据</legend><div id="production-report-columns" class="report-column-options"></div></fieldset>{% endif %}
             <fieldset><legend>Event details / 事件明细</legend><div id="event-report-columns" class="report-column-options"></div></fieldset>
           </div>
         </details>
         <div id="report-sheet" class="report-sheet {{ 'slitting-share-report' if roll_department else '' }}" hidden>
           <div class="report-title"><div><strong>GNEM {{ department_en }} Daily Report / GNEM {{ department_cn }}日报</strong><span id="report-date-label"></span></div></div>
+          {% if roll_department %}
           <div class="report-grid">
             <section class="report-section production-report"><h2>Production data / 生产数据</h2><div id="report-production"></div></section>
+            <section class="report-section slitting-trend-report"><h2>Machine performance and four-week abnormality summary / 机台绩效与近四周异常汇总</h2><p class="report-explainer">The line chart compares seven-day plan attainment. The pivot table summarizes four weeks of cumulative abnormality minutes by machine and category. / 折线图对比近七天计划达成率；透视表汇总近四周各机台各异常类别的累计分钟。</p><div id="report-slitting-trends"></div></section>
             <section class="report-section event-report"><div class="event-report-banner"><span>每日事件明细</span><strong>Daily Event Details</strong></div><div id="report-events"></div></section>
           </div>
+          {% else %}
+          <div class="daily-management-report">
+            <section id="report-summary" class="daily-report-kpis" aria-label="Daily performance summary"></section>
+            <section class="report-section"><h2>Production performance / 生产绩效</h2><div id="report-production"></div></section>
+            <section class="report-section effective-time-section"><h2>Events without effective time cost / 无有效时间成本事件</h2><p class="report-explainer">All events where “Effective time cost” is No. Event text wraps so the complete entry remains visible. / 所有“有效时间成本”为否的事件；文字自动换行以完整显示原始记录。</p><div id="report-effective-time"></div></section>
+            <section class="report-section"><h2>Recorded time by event category / 各事件类别记录时间</h2><p class="report-explainer">Categories are shown exactly as entered in the event tracker; the report does not reclassify them. / 类别完全按照事件追踪中的记录显示，报告不会重新分类。</p><div id="report-time-distribution"></div></section>
+            <section class="report-section ongoing-report-section"><h2>Unresolved on report date / 报告日期未解决</h2><p class="report-explainer">Event date equals the selected report date and “Resolved” is No. / 事件日期等于所选报告日期，且“已解决”为否。</p><div id="report-unresolved-today"></div></section>
+            <section class="report-section ongoing-report-section"><h2>Unresolved from earlier dates / 以往日期未解决</h2><p class="report-explainer">Event date is before the selected report date and “Resolved” is No. These are the same source records as the Employee Data Log, filtered here for follow-up; the Data Log remains the complete audit history. / 事件日期早于所选报告日期，且“已解决”为否。这些记录与员工数据日志来源相同，此处仅筛选用于跟进；数据日志仍保留完整历史。</p><div id="report-ongoing"></div></section>
+            <section class="report-section"><h2>Notable completed events / 重点已完成事件</h2><p class="report-explainer">Completed events lasting at least 60 minutes or recorded with medium/high severity. This section stays on the website and is omitted from the downloaded image. / 已完成且持续至少60分钟，或严重程度为中/高的事件。此部分仅在网页显示，不包含在下载图片中。</p><div id="report-exceptions"></div></section>
+          </div>
+          {% endif %}
         </div>
       </section>
 
@@ -192,6 +206,7 @@
           </div>
           <div>
             <button type="button" class="primary manager-add-record" data-record-type="production">Add production / 添加生产记录</button>
+            <button type="button" class="secondary open-data-export" data-export-dataset="production">Export Excel / 导出 Excel</button>
             <button type="button" id="open-slitting-models" class="secondary" data-slitting-only hidden>Model lookup / 型号参数</button>
             <button class="secondary copy" data-copy="production-table">Copy table / 复制表格</button>
             <button class="primary refresh" data-type="production" data-target="#production-table">Refresh / 刷新</button>
@@ -273,6 +288,7 @@
           </div>
           <div>
             <button type="button" class="primary" data-view="abnormality">Add event / 添加事件记录</button>
+            <button type="button" class="secondary open-data-export" data-export-dataset="abnormality">Export Excel / 导出 Excel</button>
             <button class="secondary copy" data-copy="tracker-table">Copy table</button>
             <button class="primary refresh" data-type="tracker" data-target="#tracker-table">Refresh</button>
           </div>
@@ -280,6 +296,7 @@
         <div class="history-filters" data-history-filters="tracker">
           <label>Date / 日期<input class="history-filter" name="date" type="date"></label>
           <label>Machine / 设备<input class="history-filter" name="machine" placeholder="A1"></label>
+          <label>{{ 'Main category / 主类别' if roll_department else 'Event type / 事件类型' }}<select class="history-filter" name="event_type"><option value="">All / 全部</option></select></label>
           <button class="secondary refresh" data-type="tracker" data-target="#tracker-table">Apply filters / 应用筛选</button>
         </div>
         <div id="tracker-table"></div>
@@ -332,7 +349,7 @@
                     <label>Label / 字段名称<input name="label" required></label>
                     <label class="wide" id="standard-field-options-wrap">Dropdown options (one per line; leave blank to keep the system defaults) / 下拉选项（每行一项；留空则保留系统默认值）<textarea name="options" placeholder="Option 1 / 选项 1&#10;Option 2 / 选项 2"></textarea><small><code>saved value|display label</code>, for example <code>Day|Day / 白班</code>. The first value is stored in the database; employees see only the label after <code>|</code>. / 格式为“保存值|显示名称”；前面的值存入数据库，员工只看到竖线后的名称。</small></label>
                     <label class="wide">Help text (optional) / 字段说明（可选）<textarea name="help_text" placeholder="Short instruction shown to employees / 员工可见的简短填写说明"></textarea></label>
-                    <div class="wide form-actions"><button class="primary">Save standard field / 保存标准字段</button></div>
+                    <div class="wide form-actions"><button class="primary">Save standard field / 保存标准字段</button><button id="reset-standard-field" class="secondary" type="button">Restore system default / 恢复系统默认</button></div>
                   </form>
                   <details class="manager-options-dropdown optional-custom-fields"><summary>Optional custom fields / 可选自定义字段</summary>
                     <p>Only use this to add a genuinely new data item. Existing custom fields are listed here; they do not replace standard SQL columns. / 仅在确需新增数据项时使用。现有自定义字段在此列出；它们不会替换标准 SQL 字段。</p>
@@ -379,12 +396,12 @@
         <div class="dialog-head"><h2>Manager sign in / 管理员登录</h2><button id="close-manager-login" class="secondary" type="button">Close / 关闭</button></div>
         <form id="manager-login-form" class="form-grid"><label class="wide">Manager PIN / 管理员密码<input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required autofocus></label>
           <p class="wide">Use the manager PIN to open the manager workspace for the selected department. / 使用管理员密码打开当前所选部门的管理工作区。</p>
-          <div class="wide form-actions"><button class="primary">Sign in / 登录</button><button id="manager-sign-out" class="secondary" type="button">Sign out / 退出</button><span id="manager-login-status" aria-live="polite"></span></div>
+          <div class="wide form-actions"><button class="primary">Sign in / 登录</button><span id="manager-login-status" aria-live="polite"></span></div>
         </form>
       </dialog>
       <dialog id="manager-workspace-dialog">
         <div class="dialog-head"><div><span class="eyebrow">Manager / 管理员</span><h2 id="manager-workspace-title">Manager workspace / 管理员工作区</h2></div><button id="close-manager-workspace" class="secondary" type="button">Close / 关闭</button></div>
-        <div class="manager-workspace-toolbar"><form id="department-form"><label>Department / 部门<select name="department"><option value="slurry" {{ 'selected' if department == 'slurry' }}>Slurry / 制浆</option><option value="slitting" {{ 'selected' if department == 'slitting' }}>Slitting / 分切</option></select></label><button class="primary">Show department / 显示部门</button></form><div><a href="/display?department={{ department }}" target="_blank">Open display / 打开看板</a><button id="open-display-settings" class="secondary" type="button">Display labels / 看板文字</button><button id="create-manager-backup" class="secondary" type="button">Create backup / 创建备份</button><button id="workspace-sign-out" class="secondary" type="button">Sign out / 退出</button></div></div>
+        <div class="manager-workspace-toolbar"><form id="department-form"><label>Department / 部门<select name="department"><option value="slurry" {{ 'selected' if department == 'slurry' }}>Slurry / 制浆</option><option value="slitting" {{ 'selected' if department == 'slitting' }}>Slitting / 分切</option></select></label><button class="primary">Show department / 显示部门</button></form><div><a href="/display?department={{ department }}" target="_blank">Open display / 打开看板</a><button id="open-display-settings" class="secondary" type="button">Display settings / 看板设置</button><button id="create-manager-backup" class="secondary" type="button">Create backup / 创建备份</button><button id="workspace-sign-out" class="secondary" type="button">Sign out / 退出</button></div></div>
         <span id="manager-backup-status" class="manager-backup-status" aria-live="polite"></span>
         {% if department == 'slurry' %}
           <section id="attendance-manager" class="attendance-manager">
@@ -397,15 +414,26 @@
       </dialog>
       {% if department == 'slurry' %}<dialog id="attendance-employee-dialog"><div class="dialog-head"><h2 id="attendance-employee-title">Add employee / 添加员工</h2><button id="close-attendance-employee" class="secondary" type="button">Close / 关闭</button></div><form id="attendance-employee-form" class="form-grid"><input name="employee_id" type="hidden"><label>Staffing company / 劳务公司<input name="staffing_company" required maxlength="120"></label><label>Name / 姓名<input name="employee_name" required maxlength="120"></label><label>Department / 部门<input name="employee_department" value="Slurry" maxlength="80"></label><label>Job title / 职位<input name="job_title" maxlength="120"></label><label class="wide">4-digit PIN / 4位密码<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4"><small>Exactly 4 digits. Required for new employees; leave blank during editing to keep the current PIN. / 必须为4位数字；新员工必填，编辑时留空可保留原密码。</small></label><label><input name="is_active" type="checkbox" checked> Active / 启用</label><div class="wide form-actions"><button class="primary">Save employee / 保存员工</button><span id="attendance-employee-status" aria-live="polite"></span></div></form></dialog>{% endif %}
       {% if department == 'slurry' %}<dialog id="attendance-record-dialog"><div class="dialog-head"><h2>Add attendance record / 添加考勤记录</h2><button id="close-attendance-record" class="secondary" type="button">Close / 关闭</button></div><form id="attendance-record-form" class="form-grid"><label class="wide">Employee / 员工<select name="employee_id" required></select></label><label>Date / 日期<input name="attendance_date" type="date" required></label><label>Paid break hours / 带薪休息<select name="paid_break_hours" required></select></label><label>Total hours / 总工时<select name="total_hours" required></select></label><label>Overtime hours / 加班工时<select name="overtime_hours"></select><input name="overtime_hours_custom" class="overtime-custom" type="number" min="0.5" max="24" step="0.5" placeholder="0.5" hidden></label><label class="wide">Manager note / 管理备注<input name="manager_note" maxlength="1000"></label><div class="wide form-actions"><button class="primary">Save record / 保存记录</button><span id="attendance-record-status" aria-live="polite"></span></div></form></dialog>{% endif %}
-      <dialog id="display-settings-dialog"><div class="dialog-head"><h2>{{ department_en }} display labels / {{ department_cn }}看板文字</h2><button id="close-display-settings" class="secondary" type="button">Close / 关闭</button></div><form id="display-settings-form"><section class="branding-settings"><h3>Editable headers / 可编辑标题</h3><div><label>Application title / 应用主标题<input id="display-brand-title" maxlength="160" required></label><label>Display small heading / 看板小标题<input id="display-brand-eyebrow" maxlength="160"></label><label>Display large heading / 看板大标题<input id="display-brand-display-title" maxlength="160" required></label></div></section><button id="add-permanent-text-block" type="button" hidden></button><div id="display-layout-preview" hidden></div><div id="display-block-settings" hidden></div><div class="display-block-heading"><h3>Daily Event columns / 每日事件列</h3>{% if roll_department %}<button id="select-all-event-columns" class="secondary" type="button">Select all / 全选</button>{% endif %}</div><div id="display-column-settings" class="display-settings-list"></div><div class="form-actions"><button class="primary">Save labels / 保存文字</button><span id="display-settings-status" aria-live="polite"></span></div></form></dialog>
+      <dialog id="display-settings-dialog"><div class="dialog-head"><h2>{{ department_en }} display labels / {{ department_cn }}看板文字</h2><button id="close-display-settings" class="secondary" type="button">Close / 关闭</button></div><form id="display-settings-form"><section class="branding-settings"><h3>Editable headers / 可编辑标题</h3><div><label>Application title / 应用主标题<input id="display-brand-title" maxlength="160" required></label><label>Display small heading / 看板小标题<input id="display-brand-eyebrow" maxlength="160"></label><label>Display large heading / 看板大标题<input id="display-brand-display-title" maxlength="160" required></label></div></section><section class="abnormality-type-settings"><div class="display-block-heading"><h3>{% if roll_department %}Abnormality main categories / 异常主类别{% else %}Abnormality event types / 异常事件类型{% endif %}</h3><span><button id="select-all-abnormality-types" class="secondary" type="button">Select all / 全选</button> <button id="clear-abnormality-types" class="secondary" type="button">Clear / 清除</button></span></div><p>Choose which categories appear in the TV abnormality distribution charts. / 选择电视异常分布图中显示的类别。</p><div id="display-abnormality-types" class="abnormality-type-options"></div></section><button id="add-permanent-text-block" type="button" hidden></button><div id="display-layout-preview" hidden></div><div id="display-block-settings" hidden></div><div class="display-block-heading"><h3>Daily Event columns / 每日事件列</h3>{% if roll_department %}<button id="select-all-event-columns" class="secondary" type="button">Select all / 全选</button>{% endif %}</div><div id="display-column-settings" class="display-settings-list"></div><div class="form-actions"><button class="primary">Save labels / 保存文字</button><span id="display-settings-status" aria-live="polite"></span></div></form></dialog>
       <dialog id="manager-record-dialog">
         <div class="dialog-head"><h2 id="manager-record-dialog-title">Edit record / 编辑记录</h2><button id="close-manager-record-dialog" class="secondary" type="button">Close / 关闭</button></div>
         <form id="manager-record-edit" class="form-grid"><div id="manager-record-edit-fields" class="wide dynamic-fields"></div><div class="wide form-actions"><button class="primary">Save record / 保存记录</button><span id="manager-record-edit-status" aria-live="polite"></span></div></form>
       </dialog>
+      <dialog id="data-export-dialog" class="data-export-dialog" aria-labelledby="data-export-title">
+        <div class="dialog-head"><div><h2 id="data-export-title">Export operational data / 导出生产与事件数据</h2><p>Select a date range and the exact columns to include, preview the result, then export Excel. / 选择日期范围和导出列，预览后再导出 Excel。</p></div><button id="close-data-export" class="secondary" type="button">Close / 关闭</button></div>
+        <form id="data-export-form" class="form-grid">
+          <label>Dataset / 数据类型<select name="dataset"><option value="production">Production data / 生产数据</option><option value="abnormality">Abnormality reports / 异常报告</option></select></label>
+          <label>Start date / 开始日期<input name="start_date" type="date" required></label>
+          <label>End date / 结束日期<input name="end_date" type="date" required></label>
+          <fieldset class="wide export-column-fieldset"><legend>Columns to export / 选择导出列</legend><div class="export-column-actions"><button id="select-all-export-columns" type="button" class="secondary">Select all / 全选</button><button id="clear-export-columns" type="button" class="secondary">Clear / 清除</button></div><div id="data-export-columns" class="export-column-grid"></div></fieldset>
+          <div class="wide form-actions"><button id="preview-data-export" class="secondary" type="submit">Preview / 预览</button><button id="download-data-export" class="primary" type="button" disabled>Export Excel / 导出 Excel</button><span id="data-export-status" aria-live="polite"></span></div>
+        </form>
+        <section class="export-preview-section"><h3>Preview / 预览</h3><div id="data-export-preview"><p class="empty">Choose dates and columns, then preview. / 选择日期和列后点击预览。</p></div></section>
+      </dialog>
     </main>
     <script src="/static/departments.js"></script>
-    <script src="/static/app.js?v=20260921-fixed-display"></script>
-    <script src="/static/slitting.js?v=20260915-production-date"></script>
+    <script src="/static/app.js?v=20261015-report-pdf"></script>
+    <script src="/static/slitting.js?v=20261015-report-pdf"></script>
     <script src="/static/inventory.js"></script>
   </body>
 </html>

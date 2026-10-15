@@ -63,9 +63,16 @@ def create_app(display_only=False):
                 "/api/attendance/reset-pin",
                 "/api/attendance/records",
             }
+            inventory_get_path = request.path.startswith("/inventory/scan/")
+            inventory_post_path = request.path.startswith(
+                "/api/inventory/scan/"
+            ) or request.path == "/api/inventory/decode-qr"
             allowed_display_request = (
-                request.method in {"GET", "HEAD"} and (public_display_path or attendance_get_path)
-            ) or (request.method == "POST" and attendance_post_path)
+                request.method in {"GET", "HEAD"}
+                and (public_display_path or attendance_get_path or inventory_get_path)
+            ) or (
+                request.method == "POST" and (attendance_post_path or inventory_post_path)
+            )
             if not allowed_display_request:
                 abort(404)
 

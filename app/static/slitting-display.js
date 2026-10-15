@@ -6,10 +6,11 @@ const displayDepartment = displayParams.get('department') === 'coating' ? 'coati
 function currentProductionSlot(now = new Date()) {
   const date = new Date(now);
   let shift = 'Day';
-  if (now.getHours() < 8) {
+  const shiftMinutes = now.getHours() * 60 + now.getMinutes();
+  if (shiftMinutes < 7 * 60 + 50) {
     date.setDate(date.getDate() - 1);
     shift = 'Night'
-  } else if (now.getHours() >= 20) shift = 'Night';
+  } else if (shiftMinutes >= 19 * 60 + 50) shift = 'Night';
   const offset = date.getTimezoneOffset() * 60000;
   return {
     date: new Date(date.getTime() - offset).toISOString().slice(0, 10),
@@ -237,6 +238,30 @@ function eventTable(events, settings) {
   return `<div class="slitting-event-grid">${events.map(row=>`<article class="slitting-event-item"><strong>${escapeHtml(row.machine_code)} · ${escapeHtml(row.event_type)}</strong>${columns.filter(column=>!['machine_code','event_type'].includes(column.key)).map(column=>`<span><b>${escapeHtml(column.label)}:</b> ${escapeHtml(row[column.key])}</span>`).join('')}</article>`).join('')}</div>`;
 }
 
+function slittingMachineAttainmentTrend(rows, dates) {
+  const palette = ['#4cc9a7','#55a7e0','#f0b85a','#ef7b73','#a98ce5','#74c47d','#d982b5','#7f9bb3'],
+    machines = [...new Set(rows.map(row => row.machine_code).filter(Boolean))].sort();
+  if (!machines.length) return '';
+  const values = Object.fromEntries(machines.map(machine => [machine, Object.fromEntries(dates.map(date => [date, {planned:0, actual:0}]))]));
+  rows.forEach(row => {
+    if (!values[row.machine_code]?.[row.record_date]) return;
+    values[row.machine_code][row.record_date].planned += Number(row.planned_quantity) || 0;
+    values[row.machine_code][row.record_date].actual += Number(row.actual_quantity) || 0;
+  });
+  const width=900,height=270,left=48,right=18,top=24,bottom=42,plotWidth=width-left-right,plotHeight=height-top-bottom,
+    x=index=>left+(dates.length<2?plotWidth/2:index*plotWidth/(dates.length-1)), y=rate=>top+plotHeight-Math.min(rate,1.5)/1.5*plotHeight;
+  const grid=[0,.5,1,1.5].map(rate=>`<line x1="${left}" y1="${y(rate)}" x2="${width-right}" y2="${y(rate)}" class="chart-grid"/><text x="${left-7}" y="${y(rate)+4}" text-anchor="end">${Math.round(rate*100)}%</text>`).join('');
+  const lines=machines.map((machine,index)=>{
+    const machinePoints=dates.map((date,dateIndex)=>{const item=values[machine][date],rate=item.planned?item.actual/item.planned:null;return {rate,x:x(dateIndex),y:rate==null?null:y(rate)}}),
+      points=machinePoints.filter(point=>point.rate!=null).map(point=>`${point.x},${point.y}`).join(' '),
+      pointLabels=machinePoints.filter(point=>point.rate!=null).map(point=>`<circle cx="${point.x}" cy="${point.y}" r="4" fill="${palette[index%palette.length]}"/><text x="${point.x}" y="${Math.max(14,point.y-10-(index%3)*11)}" text-anchor="middle" class="machine-point-label">${Math.round(point.rate*100)}%</text>`).join('');
+    return `<polyline points="${points}" fill="none" stroke="${palette[index%palette.length]}" stroke-width="3"><title>${escapeHtml(machine)} plan attainment</title></polyline>${pointLabels}`;
+  }).join('');
+  const labels=dates.map((date,index)=>`<text x="${x(index)}" y="${height-13}" text-anchor="middle">${escapeHtml(date.slice(5))}</text>`).join('');
+  const legend=machines.map((machine,index)=>`<span><i class="machine-color-${index%8}"></i>${escapeHtml(machine)}</span>`).join('');
+  return `<section class="machine-trend-panel"><h3>Plan attainment by machine / 各机台计划达成率</h3><div class="machine-chart-legend">${legend}</div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Seven-day plan attainment rate by machine">${grid}${lines}${labels}</svg></section>`;
+}
+
 function slittingProductionTrend(rows, dailyRows) {
   const dates = (dailyRows || []).map(row => row.date),
     widthGroups = new Map();
@@ -319,7 +344,7 @@ function slittingProductionTrend(rows, dailyRows) {
           ).join('');
       return `<article class="width-yield-panel"><h3>${escapeHtml(widthLabel)} <small>Machine / 机台: ${escapeHtml([...group.machines].sort().join(', '))}</small></h3><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(widthLabel)} seven-day production statistics">${grid}${columns}<polyline points="${plannedPoints}" fill="none" stroke="#f0b85a" stroke-width="3" stroke-dasharray="7 5" stroke-linejoin="round"/>${plannedDots}</svg></article>`
     }).join('');
-  return `${legend}<div class="width-yield-grid">${panels}</div>`;
+  return `${slittingMachineAttainmentTrend(rows, dates)}${legend}<div class="width-yield-grid">${panels}</div>`;
 }
 
 function renderSlittingPending(records) {
@@ -418,7 +443,32 @@ function slittingAbnormalityTrend(rows) {
     }).join('');
     return `${segments}<text x="${x+bar/2}" y="${Math.max(cursor-7,top-4)}" text-anchor="middle" class="chart-value">${Math.round(total)} min</text><text x="${x+bar/2}" y="${height-12}" text-anchor="middle">${escapeHtml(row.date).slice(5)}</text>`
   }).join('');
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Stacked abnormal downtime by category and date">${legend}${grid}${bars}</svg>`;
+  const machineTotals = {};
+  rows.forEach(row => (row.categories || []).forEach(item => {
+    const machine = item.machine || 'Unknown';
+    if (!machineTotals[machine]) machineTotals[machine] = {total:0, categories:{}};
+    machineTotals[machine].total += Number(item.minutes) || 0;
+    machineTotals[machine].categories[item.type] = (machineTotals[machine].categories[item.type] || 0) + (Number(item.minutes) || 0);
+  }));
+  const maxMachine = Math.max(1, ...Object.values(machineTotals).map(item => item.total));
+  const machineComparison = Object.entries(machineTotals).sort((a,b)=>b[1].total-a[1].total).map(([machine,item]) => {
+    const machineBarWidth = 440;
+    let cursor = 0;
+    const segments = categories.map(category => {
+      const minutes = item.categories[category.type] || 0,
+        segmentWidth = minutes / maxMachine * machineBarWidth,
+        segmentCenter = cursor + segmentWidth / 2,
+        segment = `<rect x="${cursor.toFixed(2)}" width="${segmentWidth.toFixed(2)}" height="24" fill="${colors[category.type]}" class="chart-stack-segment"><title>${escapeHtml(machine)} · ${escapeHtml(category.label)}: ${Math.round(minutes)} min</title></rect><text x="${segmentCenter.toFixed(2)}" y="12.5" text-anchor="middle" dominant-baseline="middle" class="machine-segment-label">${Math.round(minutes)}m</text>`;
+      cursor += segmentWidth;
+      return minutes > 0 ? segment : '';
+    }).join('');
+    return `<article><strong>${escapeHtml(machine)}</strong><svg class="machine-stacked-bar" viewBox="0 0 ${machineBarWidth} 24" role="img" aria-label="${escapeHtml(machine)} cumulative downtime ${Math.round(item.total)} minutes"><rect width="${machineBarWidth}" height="24" fill="#e8eff2"/>${segments}</svg><span>${Math.round(item.total)} min</span></article>`;
+  }).join('');
+  const machineLegend = categories.map(category => {
+    const total = Object.values(machineTotals).reduce((sum, item) => sum + (item.categories[category.type] || 0), 0);
+    return `<li><svg viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${colors[category.type]}"/></svg><span>${escapeHtml(category.label)}</span><strong>${Math.round(total)} min</strong></li>`;
+  }).join('');
+  return `<section class="machine-downtime-panel"><h3>Cumulative downtime by machine / 各机台累计停机时间</h3><div class="machine-downtime-body"><div class="machine-downtime-list">${machineComparison}</div><aside class="machine-downtime-legend" aria-label="Downtime category legend"><strong><span>Downtime categories</span><span>停机类别</span></strong><ul>${machineLegend}</ul></aside></div></section><section class="date-downtime-panel"><h3>Daily downtime by category / 每日各类别停机时间</h3><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Stacked abnormal downtime by category and date">${legend}${grid}${bars}</svg></section>`;
 }
 async function refreshSlittingDisplay() {
   try {
