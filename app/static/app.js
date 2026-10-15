@@ -1511,7 +1511,7 @@ async function saveSlurryReportImage(download = true) {
     ['planned_quantity', 'Plan / 计划'], ['actual_quantity', 'Actual / 实际'],
     ['achievement_rate', 'Attainment / 达成率'], ['qualified_quantity', 'Quality / 合格']
   ], y, width, margin);
-  y = drawCanvasWrappedTable(context, 'Events without effective time cost / 无有效时间成本事件', model.effectiveNo, [
+  y = drawCanvasWrappedTable(context, 'Ineffective cost / 无效成本', model.effectiveNo, [
     ['event_time', 'Time / 时间'], ['machine_code', 'Machine / 设备'],
     ['event_type', 'Category / 类别'], ['description', 'What happened / 发生了什么'],
     ['duration_minutes', 'Minutes / 分钟']
@@ -2558,7 +2558,8 @@ function slurryReportModel(data) {
   const exceptions = data.events.filter(event => event.is_resolved !== 'no' &&
     (Number(event.duration_minutes || 0) >= 60 ||
       ['medium', 'high'].includes(String(event.severity).toLowerCase())));
-  const effectiveNo = data.events.filter(event => event.effective_time_cost === 'no');
+  const effectiveNo = data.events.filter(event =>
+    String(event.effective_time_cost || '').trim().toLowerCase() === 'no');
   return {
     totals,
     categories,

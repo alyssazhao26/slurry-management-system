@@ -162,7 +162,7 @@
           <div class="daily-management-report">
             <section id="report-summary" class="daily-report-kpis" aria-label="Daily performance summary"></section>
             <section class="report-section"><h2>Production performance / 生产绩效</h2><div id="report-production"></div></section>
-            <section class="report-section effective-time-section"><h2>Events without effective time cost / 无有效时间成本事件</h2><p class="report-explainer">All events where “Effective time cost” is No. Event text wraps so the complete entry remains visible. / 所有“有效时间成本”为否的事件；文字自动换行以完整显示原始记录。</p><div id="report-effective-time"></div></section>
+            <section class="report-section effective-time-section"><h2>Ineffective cost / 无效成本</h2><p class="report-explainer">All events where “Effective time cost” is No. Event text wraps so the complete entry remains visible. / 所有“有效时间成本”为否的事件；文字自动换行以完整显示原始记录。</p><div id="report-effective-time"></div></section>
             <section class="report-section"><h2>Recorded time by event category / 各事件类别记录时间</h2><p class="report-explainer">Categories are shown exactly as entered in the event tracker; the report does not reclassify them. / 类别完全按照事件追踪中的记录显示，报告不会重新分类。</p><div id="report-time-distribution"></div></section>
             <section class="report-section ongoing-report-section"><h2>Unresolved on report date / 报告日期未解决</h2><p class="report-explainer">Event date equals the selected report date and “Resolved” is No. / 事件日期等于所选报告日期，且“已解决”为否。</p><div id="report-unresolved-today"></div></section>
             <section class="report-section ongoing-report-section"><h2>Unresolved from earlier dates / 以往日期未解决</h2><p class="report-explainer">Event date is before the selected report date and “Resolved” is No. These are the same source records as the Employee Data Log, filtered here for follow-up; the Data Log remains the complete audit history. / 事件日期早于所选报告日期，且“已解决”为否。这些记录与员工数据日志来源相同，此处仅筛选用于跟进；数据日志仍保留完整历史。</p><div id="report-ongoing"></div></section>
@@ -432,7 +432,7 @@
       </dialog>
     </main>
     <script src="/static/departments.js"></script>
-    <script src="/static/app.js?v=20261015-report-pdf"></script>
+    <script src="/static/app.js?v=20261015-ineffective-cost"></script>
     <script src="/static/slitting.js?v=20261015-report-pdf"></script>
     <script src="/static/inventory.js"></script>
   </body>

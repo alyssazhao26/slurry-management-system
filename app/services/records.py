@@ -1944,7 +1944,7 @@ def daily_report(record_date):
                    CONCAT(COALESCE(TIME_FORMAT(start_time, '%H:%i'), '—'), ' - ',
                           COALESCE(TIME_FORMAT(end_time, '%H:%i'), '—')) AS event_time,
                    duration_minutes, event_type, severity, description, immediate_action,
-                   is_resolved, responsible_person, target_finish_date, actual_finish_date,
+                   is_resolved, effective_time_cost, responsible_person, target_finish_date, actual_finish_date,
                    solution_provided, effectiveness, custom_fields
             FROM system_import.abnormality_reports
             WHERE event_date = %s

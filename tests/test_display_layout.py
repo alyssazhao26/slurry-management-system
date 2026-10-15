@@ -163,7 +163,7 @@ def test_slitting_training_is_rendered_on_management_dashboard():
 
     assert "item.type === 'slitting_training'" in app_js
     assert "Training / 培训" in app_js
-    assert "app.js?v=20261015-report-pdf" in dashboard
+    assert "app.js?v=20261015-ineffective-cost" in dashboard
     assert "slitting.js?v=20261015-report-pdf" in dashboard
     assert "select-all-event-columns" in dashboard
     assert "display-abnormality-types" in dashboard
@@ -209,6 +209,9 @@ def test_slurry_daily_report_is_management_by_exception():
     assert "canvasTableHeight(model.unresolvedToday.length)" in app_js
     assert 'class="category-composition" viewBox="0 0 100 10"' in app_js
     assert "report-effective-time" in template
+    assert "Ineffective cost / 无效成本" in template
+    assert "effective_time_cost, responsible_person" in service
+    assert "String(event.effective_time_cost || '').trim().toLowerCase() === 'no'" in app_js
     assert "load-sample-report" not in template
     assert "renderReportTable('#report-exceptions', model.exceptions" in app_js
     assert "drawCanvasTable(context, 'Notable completed events" not in app_js
